@@ -1,0 +1,13 @@
+{
+    "id": "{D32CBB1E-45BE-4864-B572-A2A92823C27D}",
+    "name": "EnergyConsumptionVisualizer",
+    "type": 3,
+    "vendor": "Codex",
+    "aliases": [
+        "Stromverbrauch Visualisierung"
+    ],
+    "parentRequirements": [],
+    "childRequirements": [],
+    "implemented": [],
+    "prefix": "ECV"
+}
