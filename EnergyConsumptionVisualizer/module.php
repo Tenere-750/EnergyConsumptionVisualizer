@@ -50,6 +50,9 @@ class EnergyConsumptionVisualizer extends IPSModule
         $this->RegisterVariableBoolean('ShowPreviousYear', 'Vorjahr anzeigen', '~Switch', 5);
         $this->SetValue('ShowPreviousYear', false);
         $this->EnableAction('ShowPreviousYear');
+        $this->RegisterVariableBoolean('YearLast12Months', 'Jahr: letzte 12 Monate', '~Switch', 6);
+        $this->SetValue('YearLast12Months', false);
+        $this->EnableAction('YearLast12Months');
         $this->RegisterVariableString('CustomStartText', 'Zeitraum Start', '', 30);
         $this->SetValue('CustomStartText', date('d.m.Y H:i', strtotime('today 00:00')));
         $this->EnableAction('CustomStartText');
@@ -195,6 +198,13 @@ class EnergyConsumptionVisualizer extends IPSModule
             $this->SetValue('ShowPreviousYear', false);
         }
 
+        $yearLast12MonthsExisted = $this->IdentExists('YearLast12Months');
+        $this->MaintainVariable('YearLast12Months', 'Jahr: letzte 12 Monate', VARIABLETYPE_BOOLEAN, '~Switch', 6, true);
+        $this->EnableAction('YearLast12Months');
+        if (!$yearLast12MonthsExisted) {
+            $this->SetValue('YearLast12Months', false);
+        }
+
         foreach ($this->GetConfiguredSeries() as $index => $series) {
             $ident = $series['showIdent'];
             if ($ident === '') {
@@ -263,7 +273,7 @@ class EnergyConsumptionVisualizer extends IPSModule
             return true;
         }
 
-        return $ident === 'ShowPreviousYear' || (bool) preg_match('/^ShowConsumer([1-9]|10)$/', $ident);
+        return in_array($ident, ['ShowPreviousYear', 'YearLast12Months'], true) || (bool) preg_match('/^ShowConsumer([1-9]|10)$/', $ident);
     }
 
     private function IsSeriesVisible(string $ident): bool
@@ -405,6 +415,10 @@ class EnergyConsumptionVisualizer extends IPSModule
 
         if ($period === 'week') {
             return [strtotime('-11 weeks', strtotime('monday this week 00:00')), $now, $aggregation];
+        }
+
+        if ($this->IdentExists('YearLast12Months') && (bool) $this->GetValue('YearLast12Months')) {
+            return [strtotime('first day of this month 00:00 -11 months'), $now, $aggregation];
         }
 
         return [strtotime('first day of january this year 00:00'), $now, $aggregation];

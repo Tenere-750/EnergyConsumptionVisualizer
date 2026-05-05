@@ -10,6 +10,7 @@ Dieses Modul visualisiert archivierte Stromverbrauchswerte fuer L1, L2, L3, Gesa
 - Optionaler Vorjahresvergleich im Diagramm, ebenfalls per WebFront-Schalter
 - Anzeige des Delta-Werts direkt am Balken
 - Individueller Zeitraum im WebFront ueber Start, Ende und Update-Button steuerbar, z. B. `05.05.2026 08:00`
+- Jahresuebersicht wahlweise als laufendes Kalenderjahr oder letzte 12 Monate
 - Datenquelle: Archive Control ueber `AC_GetAggregatedValues`
 - Prognose ueber gleitenden Tagesdurchschnitt aus vorhandenen Delta-Archivdaten
 - JSON-Ausgabe ueber `ECV_GetData($InstanzID, $Period)` fuer eigene Skripte
