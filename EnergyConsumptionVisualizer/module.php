@@ -33,19 +33,34 @@ class EnergyConsumptionVisualizer extends IPSModule
 
         $this->RegisterAttributeString('LastDataJson', '{}');
 
-        $this->RegisterVariableString('Visualization', 'Uebersicht', '~HTMLBox', 10);
-        $this->RegisterVariableString('HourVisualization', 'Stunde', '~HTMLBox', 20);
-        $this->RegisterVariableString('DayVisualization', 'Tag', '~HTMLBox', 30);
-        $this->RegisterVariableString('WeekVisualization', 'Woche', '~HTMLBox', 40);
-        $this->RegisterVariableString('YearVisualization', 'Jahr', '~HTMLBox', 50);
-        $this->RegisterVariableString('CustomVisualization', 'Eigener Zeitraum', '~HTMLBox', 60);
-        $this->RegisterVariableString('Forecast', 'Prognose', '~HTMLBox', 70);
+        $this->RegisterVariableBoolean('ShowL1', 'Anzeigen L1', '~Switch', 1);
+        $this->SetValue('ShowL1', true);
+        $this->EnableAction('ShowL1');
+        $this->RegisterVariableBoolean('ShowL2', 'Anzeigen L2', '~Switch', 2);
+        $this->SetValue('ShowL2', true);
+        $this->EnableAction('ShowL2');
+        $this->RegisterVariableBoolean('ShowL3', 'Anzeigen L3', '~Switch', 3);
+        $this->SetValue('ShowL3', true);
+        $this->EnableAction('ShowL3');
+        $this->RegisterVariableBoolean('ShowTotal', 'Anzeigen Gesamt', '~Switch', 4);
+        $this->SetValue('ShowTotal', true);
+        $this->EnableAction('ShowTotal');
+
+        $this->RegisterVariableString('Visualization', 'Uebersicht', '~HTMLBox', 100);
+        $this->RegisterVariableString('HourVisualization', 'Stunde', '~HTMLBox', 110);
+        $this->RegisterVariableString('DayVisualization', 'Tag', '~HTMLBox', 120);
+        $this->RegisterVariableString('WeekVisualization', 'Woche', '~HTMLBox', 130);
+        $this->RegisterVariableString('YearVisualization', 'Jahr', '~HTMLBox', 140);
+        $this->RegisterVariableString('CustomVisualization', 'Eigener Zeitraum', '~HTMLBox', 150);
+        $this->RegisterVariableString('Forecast', 'Prognose', '~HTMLBox', 160);
     }
 
     public function ApplyChanges(): void
     {
         parent::ApplyChanges();
 
+        $this->MaintainSelectionVariables();
+        $this->MaintainOutputVariables();
         $this->MaintainReferences();
         if (!$this->ValidateConfiguration()) {
             return;
@@ -76,6 +91,18 @@ class EnergyConsumptionVisualizer extends IPSModule
         $this->SetValue('YearVisualization', $this->RenderDashboard($allData['year']));
         $this->SetValue('CustomVisualization', $this->RenderDashboard($allData['custom']));
         $this->SetValue('Forecast', $this->RenderForecast($data['forecast']));
+    }
+
+    public function RequestAction($Ident, $Value): void
+    {
+        $ident = (string) $Ident;
+        if ($this->IsSelectionIdent($ident) && $this->IdentExists($ident)) {
+            $this->SetValue($ident, (bool) $Value);
+            $this->Refresh();
+            return;
+        }
+
+        throw new Exception('Invalid ident');
     }
 
     public function GetData(string $Period = ''): string
@@ -124,6 +151,79 @@ class EnergyConsumptionVisualizer extends IPSModule
         return true;
     }
 
+    private function MaintainSelectionVariables(): void
+    {
+        foreach ($this->GetConfiguredSeries() as $index => $series) {
+            $ident = $series['showIdent'];
+            if ($ident === '') {
+                continue;
+            }
+
+            $visible = $series['id'] > 0;
+            $existed = $this->IdentExists($ident);
+            $this->MaintainVariable($ident, 'Anzeigen ' . $series['name'], VARIABLETYPE_BOOLEAN, '~Switch', 1 + $index, $visible);
+
+            if ($visible) {
+                $this->EnableAction($ident);
+                if (!$existed) {
+                    $this->SetValue($ident, true);
+                }
+            }
+        }
+
+        for ($index = 1; $index <= 10; $index++) {
+            $ident = 'ShowConsumer' . $index;
+            if (!$this->IsConfiguredConsumerIdent($ident)) {
+                $this->MaintainVariable($ident, 'Anzeigen Verbraucher ' . $index, VARIABLETYPE_BOOLEAN, '~Switch', 10 + $index, false);
+            }
+        }
+    }
+
+    private function MaintainOutputVariables(): void
+    {
+        $this->MaintainVariable('Visualization', 'Uebersicht', VARIABLETYPE_STRING, '~HTMLBox', 100, true);
+        $this->MaintainVariable('HourVisualization', 'Stunde', VARIABLETYPE_STRING, '~HTMLBox', 110, true);
+        $this->MaintainVariable('DayVisualization', 'Tag', VARIABLETYPE_STRING, '~HTMLBox', 120, true);
+        $this->MaintainVariable('WeekVisualization', 'Woche', VARIABLETYPE_STRING, '~HTMLBox', 130, true);
+        $this->MaintainVariable('YearVisualization', 'Jahr', VARIABLETYPE_STRING, '~HTMLBox', 140, true);
+        $this->MaintainVariable('CustomVisualization', 'Eigener Zeitraum', VARIABLETYPE_STRING, '~HTMLBox', 150, true);
+        $this->MaintainVariable('Forecast', 'Prognose', VARIABLETYPE_STRING, '~HTMLBox', 160, true);
+    }
+
+    private function IsSelectionIdent(string $ident): bool
+    {
+        if (in_array($ident, ['ShowL1', 'ShowL2', 'ShowL3', 'ShowTotal'], true)) {
+            return true;
+        }
+
+        return (bool) preg_match('/^ShowConsumer([1-9]|10)$/', $ident);
+    }
+
+    private function IsSeriesVisible(string $ident): bool
+    {
+        if ($ident === '' || !$this->IdentExists($ident)) {
+            return true;
+        }
+
+        return (bool) $this->GetValue($ident);
+    }
+
+    private function IsConfiguredConsumerIdent(string $ident): bool
+    {
+        foreach ($this->GetConfiguredSeries() as $series) {
+            if (($series['showIdent'] ?? '') === $ident && $series['id'] > 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function IdentExists(string $ident): bool
+    {
+        return @IPS_GetObjectIDByIdent($ident, $this->InstanceID) !== false;
+    }
+
     private function BuildDashboardData(string $period): array
     {
         if (!array_key_exists($period, self::PERIODS)) {
@@ -135,6 +235,10 @@ class EnergyConsumptionVisualizer extends IPSModule
 
         foreach ($this->GetConfiguredSeries() as $definition) {
             if ($definition['id'] <= 0) {
+                continue;
+            }
+
+            if (!$this->IsSeriesVisible($definition['showIdent'])) {
                 continue;
             }
 
@@ -432,10 +536,10 @@ class EnergyConsumptionVisualizer extends IPSModule
     private function GetConfiguredSeries(): array
     {
         $series = [
-            ['name' => 'L1', 'id' => $this->ReadPropertyInteger('L1VariableID'), 'role' => 'main'],
-            ['name' => 'L2', 'id' => $this->ReadPropertyInteger('L2VariableID'), 'role' => 'main'],
-            ['name' => 'L3', 'id' => $this->ReadPropertyInteger('L3VariableID'), 'role' => 'main'],
-            ['name' => 'Gesamt', 'id' => $this->ReadPropertyInteger('TotalVariableID'), 'role' => 'main'],
+            ['name' => 'L1', 'id' => $this->ReadPropertyInteger('L1VariableID'), 'role' => 'main', 'showIdent' => 'ShowL1'],
+            ['name' => 'L2', 'id' => $this->ReadPropertyInteger('L2VariableID'), 'role' => 'main', 'showIdent' => 'ShowL2'],
+            ['name' => 'L3', 'id' => $this->ReadPropertyInteger('L3VariableID'), 'role' => 'main', 'showIdent' => 'ShowL3'],
+            ['name' => 'Gesamt', 'id' => $this->ReadPropertyInteger('TotalVariableID'), 'role' => 'main', 'showIdent' => 'ShowTotal'],
         ];
 
         $consumers = json_decode($this->ReadPropertyString('Consumers'), true);
@@ -453,6 +557,7 @@ class EnergyConsumptionVisualizer extends IPSModule
                 'name' => $name !== '' ? $name : 'Verbraucher ' . ($index + 1),
                 'id' => (int) ($consumer['VariableID'] ?? 0),
                 'role' => 'consumer',
+                'showIdent' => 'ShowConsumer' . ($index + 1),
             ];
         }
 
