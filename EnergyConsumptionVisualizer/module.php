@@ -33,6 +33,8 @@ class EnergyConsumptionVisualizer extends IPSModule
 
         $this->RegisterAttributeString('LastDataJson', '{}');
 
+        $this->MaintainProfiles();
+
         $this->RegisterVariableBoolean('ShowL1', 'Anzeigen L1', '~Switch', 1);
         $this->SetValue('ShowL1', true);
         $this->EnableAction('ShowL1');
@@ -48,6 +50,14 @@ class EnergyConsumptionVisualizer extends IPSModule
         $this->RegisterVariableBoolean('ShowPreviousYear', 'Vorjahr anzeigen', '~Switch', 5);
         $this->SetValue('ShowPreviousYear', false);
         $this->EnableAction('ShowPreviousYear');
+        $this->RegisterVariableString('CustomStartText', 'Zeitraum Start', '', 30);
+        $this->SetValue('CustomStartText', date('d.m.Y H:i', strtotime('today 00:00')));
+        $this->EnableAction('CustomStartText');
+        $this->RegisterVariableString('CustomEndText', 'Zeitraum Ende', '', 31);
+        $this->SetValue('CustomEndText', date('d.m.Y H:i'));
+        $this->EnableAction('CustomEndText');
+        $this->RegisterVariableInteger('UpdateVisualization', 'Update', 'ECV.UpdateButton', 32);
+        $this->EnableAction('UpdateVisualization');
 
         $this->RegisterVariableString('Visualization', 'Uebersicht', '~HTMLBox', 100);
         $this->RegisterVariableString('HourVisualization', 'Stunde', '~HTMLBox', 110);
@@ -62,7 +72,9 @@ class EnergyConsumptionVisualizer extends IPSModule
     {
         parent::ApplyChanges();
 
+        $this->MaintainProfiles();
         $this->MaintainSelectionVariables();
+        $this->MaintainCustomRangeVariables();
         $this->MaintainOutputVariables();
         $this->MaintainReferences();
         if (!$this->ValidateConfiguration()) {
@@ -101,6 +113,17 @@ class EnergyConsumptionVisualizer extends IPSModule
         $ident = (string) $Ident;
         if ($this->IsSelectionIdent($ident) && $this->IdentExists($ident)) {
             $this->SetValue($ident, (bool) $Value);
+            $this->Refresh();
+            return;
+        }
+
+        if (in_array($ident, ['CustomStartText', 'CustomEndText'], true) && $this->IdentExists($ident)) {
+            $this->SetValue($ident, trim((string) $Value));
+            return;
+        }
+
+        if ($ident === 'UpdateVisualization') {
+            $this->SetValue('UpdateVisualization', 0);
             $this->Refresh();
             return;
         }
@@ -154,6 +177,15 @@ class EnergyConsumptionVisualizer extends IPSModule
         return true;
     }
 
+    private function MaintainProfiles(): void
+    {
+        if (!IPS_VariableProfileExists('ECV.UpdateButton')) {
+            IPS_CreateVariableProfile('ECV.UpdateButton', VARIABLETYPE_INTEGER);
+        }
+
+        IPS_SetVariableProfileAssociation('ECV.UpdateButton', 0, 'Aktualisieren', '', 0x2563EB);
+    }
+
     private function MaintainSelectionVariables(): void
     {
         $previousYearExisted = $this->IdentExists('ShowPreviousYear');
@@ -188,6 +220,30 @@ class EnergyConsumptionVisualizer extends IPSModule
                 $this->MaintainVariable($ident, 'Anzeigen Verbraucher ' . $index, VARIABLETYPE_BOOLEAN, '~Switch', 10 + $index, false);
             }
         }
+    }
+
+    private function MaintainCustomRangeVariables(): void
+    {
+        $startExisted = $this->IdentExists('CustomStartText');
+        $this->MaintainVariable('CustomStartText', 'Zeitraum Start', VARIABLETYPE_STRING, '', 30, true);
+        $this->EnableAction('CustomStartText');
+        if (!$startExisted) {
+            $this->SetValue('CustomStartText', date('d.m.Y H:i', $this->GetConfiguredCustomStart()));
+        }
+
+        $endExisted = $this->IdentExists('CustomEndText');
+        $this->MaintainVariable('CustomEndText', 'Zeitraum Ende', VARIABLETYPE_STRING, '', 31, true);
+        $this->EnableAction('CustomEndText');
+        if (!$endExisted) {
+            $this->SetValue('CustomEndText', date('d.m.Y H:i', $this->GetConfiguredCustomEnd()));
+        }
+
+        $this->MaintainVariable('CustomStartTimestamp', 'Zeitraum Start Unix', VARIABLETYPE_INTEGER, '~UnixTimestamp', 30, false);
+        $this->MaintainVariable('CustomEndTimestamp', 'Zeitraum Ende Unix', VARIABLETYPE_INTEGER, '~UnixTimestamp', 31, false);
+
+        $this->MaintainVariable('UpdateVisualization', 'Update', VARIABLETYPE_INTEGER, 'ECV.UpdateButton', 32, true);
+        $this->EnableAction('UpdateVisualization');
+        $this->SetValue('UpdateVisualization', 0);
     }
 
     private function MaintainOutputVariables(): void
@@ -321,8 +377,8 @@ class EnergyConsumptionVisualizer extends IPSModule
         $aggregation = self::PERIODS[$period]['aggregation'];
 
         if ($period === 'custom') {
-            $start = strtotime($this->ReadPropertyString('CustomStart')) ?: strtotime('today 00:00');
-            $end = strtotime($this->ReadPropertyString('CustomEnd')) ?: $now;
+            $start = $this->GetCustomStart();
+            $end = $this->GetCustomEnd();
             if ($end <= $start) {
                 $end = $now;
             }
@@ -352,6 +408,58 @@ class EnergyConsumptionVisualizer extends IPSModule
         }
 
         return [strtotime('first day of january this year 00:00'), $now, $aggregation];
+    }
+
+    private function GetCustomStart(): int
+    {
+        if ($this->IdentExists('CustomStartText')) {
+            $value = $this->ParseHumanDate((string) $this->GetValue('CustomStartText'));
+            if ($value > 0) {
+                return $value;
+            }
+        }
+
+        return $this->GetConfiguredCustomStart();
+    }
+
+    private function GetCustomEnd(): int
+    {
+        if ($this->IdentExists('CustomEndText')) {
+            $value = $this->ParseHumanDate((string) $this->GetValue('CustomEndText'));
+            if ($value > 0) {
+                return $value;
+            }
+        }
+
+        return $this->GetConfiguredCustomEnd();
+    }
+
+    private function GetConfiguredCustomStart(): int
+    {
+        return strtotime($this->ReadPropertyString('CustomStart')) ?: strtotime('today 00:00');
+    }
+
+    private function GetConfiguredCustomEnd(): int
+    {
+        return strtotime($this->ReadPropertyString('CustomEnd')) ?: time();
+    }
+
+    private function ParseHumanDate(string $value): int
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return 0;
+        }
+
+        $formats = ['d.m.Y H:i', 'd.m.Y H:i:s', 'Y-m-d H:i', 'Y-m-d H:i:s', 'd.m.Y'];
+        foreach ($formats as $format) {
+            $date = DateTime::createFromFormat($format, $value);
+            if ($date instanceof DateTime) {
+                return $date->getTimestamp();
+            }
+        }
+
+        return strtotime($value) ?: 0;
     }
 
     private function ReadAggregatedValues(int $variableID, int $aggregation, int $start, int $end): array
