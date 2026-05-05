@@ -45,6 +45,9 @@ class EnergyConsumptionVisualizer extends IPSModule
         $this->RegisterVariableBoolean('ShowTotal', 'Anzeigen Gesamt', '~Switch', 4);
         $this->SetValue('ShowTotal', true);
         $this->EnableAction('ShowTotal');
+        $this->RegisterVariableBoolean('ShowPreviousYear', 'Vorjahr anzeigen', '~Switch', 5);
+        $this->SetValue('ShowPreviousYear', false);
+        $this->EnableAction('ShowPreviousYear');
 
         $this->RegisterVariableString('Visualization', 'Uebersicht', '~HTMLBox', 100);
         $this->RegisterVariableString('HourVisualization', 'Stunde', '~HTMLBox', 110);
@@ -153,6 +156,13 @@ class EnergyConsumptionVisualizer extends IPSModule
 
     private function MaintainSelectionVariables(): void
     {
+        $previousYearExisted = $this->IdentExists('ShowPreviousYear');
+        $this->MaintainVariable('ShowPreviousYear', 'Vorjahr anzeigen', VARIABLETYPE_BOOLEAN, '~Switch', 5, true);
+        $this->EnableAction('ShowPreviousYear');
+        if (!$previousYearExisted) {
+            $this->SetValue('ShowPreviousYear', false);
+        }
+
         foreach ($this->GetConfiguredSeries() as $index => $series) {
             $ident = $series['showIdent'];
             if ($ident === '') {
@@ -161,7 +171,8 @@ class EnergyConsumptionVisualizer extends IPSModule
 
             $visible = $series['id'] > 0;
             $existed = $this->IdentExists($ident);
-            $this->MaintainVariable($ident, 'Anzeigen ' . $series['name'], VARIABLETYPE_BOOLEAN, '~Switch', 1 + $index, $visible);
+            $position = $series['role'] === 'main' ? 1 + $index : 10 + $index;
+            $this->MaintainVariable($ident, 'Anzeigen ' . $series['name'], VARIABLETYPE_BOOLEAN, '~Switch', $position, $visible);
 
             if ($visible) {
                 $this->EnableAction($ident);
@@ -196,7 +207,7 @@ class EnergyConsumptionVisualizer extends IPSModule
             return true;
         }
 
-        return (bool) preg_match('/^ShowConsumer([1-9]|10)$/', $ident);
+        return $ident === 'ShowPreviousYear' || (bool) preg_match('/^ShowConsumer([1-9]|10)$/', $ident);
     }
 
     private function IsSeriesVisible(string $ident): bool
@@ -231,6 +242,7 @@ class EnergyConsumptionVisualizer extends IPSModule
         }
 
         [$start, $end, $aggregation] = $this->ResolveRange($period);
+        $showPreviousYear = $this->IdentExists('ShowPreviousYear') && (bool) $this->GetValue('ShowPreviousYear');
         $series = [];
 
         foreach ($this->GetConfiguredSeries() as $definition) {
@@ -243,6 +255,15 @@ class EnergyConsumptionVisualizer extends IPSModule
             }
 
             $values = $this->ReadAggregatedValues($definition['id'], $aggregation, $start, $end);
+            $previousYearValues = [];
+            if ($showPreviousYear) {
+                [$previousYearStart, $previousYearEnd] = $this->GetPreviousYearRange($start, $end);
+                $previousYearValues = $this->AlignPreviousYearValues(
+                    $values,
+                    $this->ReadAggregatedValues($definition['id'], $aggregation, $previousYearStart, $previousYearEnd)
+                );
+            }
+
             $series[] = [
                 'name' => $definition['name'],
                 'role' => $definition['role'],
@@ -252,6 +273,7 @@ class EnergyConsumptionVisualizer extends IPSModule
                 'previousDelta' => $this->GetPreviousDelta($values),
                 'peakDelta' => $this->GetPeakDelta($values),
                 'values' => $values,
+                'previousYearValues' => $previousYearValues,
             ];
         }
 
@@ -262,9 +284,35 @@ class EnergyConsumptionVisualizer extends IPSModule
             'start' => $start,
             'end' => $end,
             'aggregation' => $aggregation,
+            'showPreviousYear' => $showPreviousYear,
             'series' => $series,
             'forecast' => $this->BuildForecast($series),
         ];
+    }
+
+    private function GetPreviousYearRange(int $start, int $end): array
+    {
+        return [
+            strtotime('-1 year', $start),
+            strtotime('-1 year', $end),
+        ];
+    }
+
+    private function AlignPreviousYearValues(array $currentValues, array $previousYearValues): array
+    {
+        $alignedValues = [];
+        $previousValues = array_values($previousYearValues);
+
+        foreach (array_values($currentValues) as $index => $currentValue) {
+            $previousValue = $previousValues[$index]['value'] ?? 0.0;
+            $alignedValues[] = [
+                'timestamp' => (int) $currentValue['timestamp'],
+                'label' => (string) $currentValue['label'],
+                'value' => round((float) $previousValue, 3),
+            ];
+        }
+
+        return $alignedValues;
     }
 
     private function ResolveRange(string $period): array
@@ -441,18 +489,39 @@ class EnergyConsumptionVisualizer extends IPSModule
         }
 
         $width = 980;
-        $height = 320;
+        $height = 350;
         $paddingLeft = 54;
-        $paddingBottom = 42;
+        $paddingBottom = 48;
         $plotWidth = $width - $paddingLeft - 18;
-        $plotHeight = $height - 28 - $paddingBottom;
+        $plotHeight = $height - 48 - $paddingBottom;
         $max = 0.0;
         $labels = [];
+        $barSeries = [];
+        $colors = ['#2563eb', '#16a34a', '#dc2626', '#9333ea', '#ea580c', '#0891b2', '#4f46e5', '#65a30d'];
 
-        foreach ($series as $item) {
+        foreach ($series as $index => $item) {
+            $color = $colors[$index % count($colors)];
+            $barSeries[] = [
+                'name' => $item['name'],
+                'values' => $item['values'],
+                'color' => $color,
+            ];
+
+            if (count($item['previousYearValues'] ?? []) > 0) {
+                $barSeries[] = [
+                    'name' => $item['name'] . ' Vorjahr',
+                    'values' => $item['previousYearValues'],
+                    'color' => $this->GetPreviousYearColor($color),
+                ];
+            }
+
             foreach ($item['values'] as $point) {
                 $max = max($max, (float) $point['value']);
                 $labels[(int) $point['timestamp']] = $point['label'];
+            }
+
+            foreach (($item['previousYearValues'] ?? []) as $point) {
+                $max = max($max, (float) $point['value']);
             }
         }
 
@@ -463,16 +532,15 @@ class EnergyConsumptionVisualizer extends IPSModule
         }
 
         $max = $max > 0 ? $max : 1;
-        $colors = ['#2563eb', '#16a34a', '#dc2626', '#9333ea', '#ea580c', '#0891b2', '#4f46e5', '#65a30d'];
         $groupWidth = $plotWidth / max(1, count($timestamps));
         $barGap = 3;
-        $barWidth = max(2, min(24, (($groupWidth - 8) / max(1, count($series))) - $barGap));
+        $barWidth = max(2, min(24, (($groupWidth - 8) / max(1, count($barSeries))) - $barGap));
         $html = '<h3>' . $this->Escape($title) . '</h3>';
         $svg = '<svg class="chart" viewBox="0 0 ' . $width . ' ' . $height . '" role="img">';
-        $svg .= '<line x1="' . $paddingLeft . '" y1="20" x2="' . $paddingLeft . '" y2="' . ($height - $paddingBottom) . '"></line>';
+        $svg .= '<line x1="' . $paddingLeft . '" y1="44" x2="' . $paddingLeft . '" y2="' . ($height - $paddingBottom) . '"></line>';
         $svg .= '<line x1="' . $paddingLeft . '" y1="' . ($height - $paddingBottom) . '" x2="' . ($width - 18) . '" y2="' . ($height - $paddingBottom) . '"></line>';
 
-        foreach ($series as $index => $item) {
+        foreach ($barSeries as $index => $item) {
             $pointsByTime = [];
             foreach ($item['values'] as $point) {
                 $pointsByTime[(int) $point['timestamp']] = (float) $point['value'];
@@ -482,9 +550,20 @@ class EnergyConsumptionVisualizer extends IPSModule
                 $value = $pointsByTime[$timestamp] ?? 0.0;
                 $barHeight = ($value / $max) * $plotHeight;
                 $x = $paddingLeft + ($pointIndex * $groupWidth) + 4 + ($index * ($barWidth + $barGap));
-                $y = 20 + ($plotHeight - $barHeight);
-                $color = $colors[$index % count($colors)];
+                $y = 44 + ($plotHeight - $barHeight);
+                $color = $item['color'];
                 $svg .= '<rect x="' . round($x, 2) . '" y="' . round($y, 2) . '" width="' . round($barWidth, 2) . '" height="' . round($barHeight, 2) . '" style="fill:' . $color . '"><title>' . $this->Escape($item['name']) . ': ' . $this->FormatNumber($value) . '</title></rect>';
+
+                if ($value > 0) {
+                    $label = $this->FormatNumber($value);
+                    $labelX = $x + ($barWidth / 2);
+                    $labelY = max(10, $y - 4);
+                    if ($barWidth < 9) {
+                        $svg .= '<text class="bar-value" x="' . round($labelX, 2) . '" y="' . round($labelY, 2) . '" text-anchor="end" transform="rotate(-60 ' . round($labelX, 2) . ' ' . round($labelY, 2) . ')">' . $this->Escape($label) . '</text>';
+                    } else {
+                        $svg .= '<text class="bar-value" x="' . round($labelX, 2) . '" y="' . round($labelY, 2) . '" text-anchor="middle">' . $this->Escape($label) . '</text>';
+                    }
+                }
             }
         }
 
@@ -498,12 +577,12 @@ class EnergyConsumptionVisualizer extends IPSModule
             $svg .= '<text class="axis-label" x="' . round($x, 2) . '" y="' . ($height - 18) . '" text-anchor="middle">' . $this->Escape((string) $labels[$timestamp]) . '</text>';
         }
 
-        $svg .= '<text x="' . $paddingLeft . '" y="14">Max ' . $this->FormatNumber($max) . '</text>';
+        $svg .= '<text x="' . $paddingLeft . '" y="16">Max ' . $this->FormatNumber($max) . '</text>';
         $svg .= '</svg>';
 
         $legend = '<div class="legend">';
-        foreach ($series as $index => $item) {
-            $legend .= '<span><i style="background:' . $colors[$index % count($colors)] . '"></i>' . $this->Escape($item['name']) . '</span>';
+        foreach ($barSeries as $item) {
+            $legend .= '<span><i style="background:' . $item['color'] . '"></i>' . $this->Escape($item['name']) . '</span>';
         }
         $legend .= '</div>';
 
@@ -620,9 +699,24 @@ class EnergyConsumptionVisualizer extends IPSModule
         return $profile['Suffix'] !== '' ? trim($profile['Suffix']) : 'kWh';
     }
 
+    private function GetPreviousYearColor(string $color): string
+    {
+        $rgb = sscanf($color, '#%02x%02x%02x');
+        if (!is_array($rgb) || count($rgb) !== 3) {
+            return '#94a3b8';
+        }
+
+        return sprintf(
+            '#%02x%02x%02x',
+            min(255, (int) round($rgb[0] + ((255 - $rgb[0]) * 0.45))),
+            min(255, (int) round($rgb[1] + ((255 - $rgb[1]) * 0.45))),
+            min(255, (int) round($rgb[2] + ((255 - $rgb[2]) * 0.45)))
+        );
+    }
+
     private function GetStyles(): string
     {
-        return '.ecv{font-family:Arial,sans-serif;color:#1f2937;background:#fff}.ecv-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin:0 0 12px}.ecv-head strong{display:block;font-size:18px}.ecv-head span{display:block;color:#6b7280;font-size:12px;margin-top:3px}.chart{width:100%;height:auto;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb}.chart line{stroke:#9ca3af;stroke-width:1}.chart rect{rx:2;ry:2}.chart text{font-size:12px;fill:#4b5563}.chart .axis-label{font-size:10px}.legend{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0 16px}.legend span{display:inline-flex;align-items:center;gap:6px;font-size:12px}.legend i{width:10px;height:10px;border-radius:50%;display:inline-block}h3{font-size:14px;margin:14px 0 6px}table{border-collapse:collapse;width:100%;font-size:13px;margin-bottom:14px}th,td{text-align:left;border-bottom:1px solid #e5e7eb;padding:7px 8px}th{color:#374151;background:#f3f4f6}.empty{padding:18px;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;color:#6b7280}';
+        return '.ecv{font-family:Arial,sans-serif;color:#1f2937;background:#fff}.ecv-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin:0 0 12px}.ecv-head strong{display:block;font-size:18px}.ecv-head span{display:block;color:#6b7280;font-size:12px;margin-top:3px}.chart{width:100%;height:auto;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb}.chart line{stroke:#9ca3af;stroke-width:1}.chart rect{rx:2;ry:2}.chart text{font-size:12px;fill:#4b5563}.chart .axis-label{font-size:10px}.chart .bar-value{font-size:9px;fill:#111827}.legend{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0 16px}.legend span{display:inline-flex;align-items:center;gap:6px;font-size:12px}.legend i{width:10px;height:10px;border-radius:50%;display:inline-block}h3{font-size:14px;margin:14px 0 6px}table{border-collapse:collapse;width:100%;font-size:13px;margin-bottom:14px}th,td{text-align:left;border-bottom:1px solid #e5e7eb;padding:7px 8px}th{color:#374151;background:#f3f4f6}.empty{padding:18px;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;color:#6b7280}';
     }
 
     private function FormatNumber(float $value): string

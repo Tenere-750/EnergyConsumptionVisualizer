@@ -7,6 +7,8 @@ Dieses Modul visualisiert archivierte Stromverbrauchswerte fuer L1, L2, L3, Gesa
 - Visualisierung als HTMLBox mit Balkendiagramm fuer Verbrauchs-Deltas
 - Eigene Visualisierungen fuer Stunde, Tag, Woche, Jahr und einen selbst definierten Zeitraum
 - Auswahl der angezeigten Kreise direkt im WebFront ueber Schalter
+- Optionaler Vorjahresvergleich im Diagramm, ebenfalls per WebFront-Schalter
+- Anzeige des Delta-Werts direkt am Balken
 - Datenquelle: Archive Control ueber `AC_GetAggregatedValues`
 - Prognose ueber gleitenden Tagesdurchschnitt aus vorhandenen Delta-Archivdaten
 - JSON-Ausgabe ueber `ECV_GetData($InstanzID, $Period)` fuer eigene Skripte
