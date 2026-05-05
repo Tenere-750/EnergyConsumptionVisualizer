@@ -8,11 +8,11 @@ class EnergyConsumptionVisualizer extends IPSModule
     private const STATUS_VARIABLE_INVALID = 202;
 
     private const PERIODS = [
-        'hour' => ['label' => 'Stunde', 'aggregation' => 6, 'seconds' => 3600, 'format' => 'H:i'],
-        'day' => ['label' => 'Tag', 'aggregation' => 0, 'seconds' => 86400, 'format' => 'H:i'],
-        'week' => ['label' => 'Woche', 'aggregation' => 1, 'seconds' => 604800, 'format' => 'd.m.'],
-        'year' => ['label' => 'Jahr', 'aggregation' => 3, 'seconds' => 31536000, 'format' => 'M'],
-        'custom' => ['label' => 'Eigener Zeitraum', 'aggregation' => 1, 'seconds' => 0, 'format' => 'd.m.'],
+        'hour' => ['label' => 'Stunde', 'aggregation' => 0],
+        'day' => ['label' => 'Tag', 'aggregation' => 1],
+        'week' => ['label' => 'Woche', 'aggregation' => 2],
+        'year' => ['label' => 'Monat', 'aggregation' => 3],
+        'custom' => ['label' => 'Intervall', 'aggregation' => 1],
     ];
 
     public function Create(): void
@@ -144,7 +144,9 @@ class EnergyConsumptionVisualizer extends IPSModule
                 'role' => $definition['role'],
                 'variableID' => $definition['id'],
                 'unit' => $this->GetVariableUnit($definition['id']),
-                'total' => array_sum(array_column($values, 'value')),
+                'currentDelta' => $this->GetCurrentDelta($values),
+                'previousDelta' => $this->GetPreviousDelta($values),
+                'peakDelta' => $this->GetPeakDelta($values),
                 'values' => $values,
             ];
         }
@@ -186,15 +188,15 @@ class EnergyConsumptionVisualizer extends IPSModule
         }
 
         if ($period === 'hour') {
-            return [$now - 3600, $now, $aggregation];
+            return [strtotime('-23 hours', strtotime(date('Y-m-d H:00:00'))), $now, $aggregation];
         }
 
         if ($period === 'day') {
-            return [strtotime('today 00:00'), $now, $aggregation];
+            return [strtotime('-13 days 00:00'), $now, $aggregation];
         }
 
         if ($period === 'week') {
-            return [strtotime('monday this week 00:00'), $now, $aggregation];
+            return [strtotime('-11 weeks', strtotime('monday this week 00:00')), $now, $aggregation];
         }
 
         return [strtotime('first day of january this year 00:00'), $now, $aggregation];
@@ -203,6 +205,7 @@ class EnergyConsumptionVisualizer extends IPSModule
     private function ReadAggregatedValues(int $variableID, int $aggregation, int $start, int $end): array
     {
         $archiveID = $this->GetArchiveID();
+        $aggregationType = AC_GetAggregationType($archiveID, $variableID);
         $rows = AC_GetAggregatedValues($archiveID, $variableID, $aggregation, $start, $end, 0);
         $rows = array_reverse($rows);
         $format = $this->GetDateFormatForAggregation($aggregation);
@@ -211,12 +214,52 @@ class EnergyConsumptionVisualizer extends IPSModule
         foreach ($rows as $row) {
             $values[] = [
                 'timestamp' => (int) $row['TimeStamp'],
-                'label' => date($format, (int) $row['TimeStamp']),
-                'value' => round((float) $row['Avg'], 3),
+                'label' => $this->GetDeltaLabel((int) $row['TimeStamp'], $aggregation, $format),
+                'value' => round($this->GetDeltaValue($row, $aggregationType), 3),
             ];
         }
 
         return $values;
+    }
+
+    private function GetDeltaValue(array $row, int $aggregationType): float
+    {
+        if ($aggregationType === 1) {
+            return max(0.0, (float) $row['Avg']);
+        }
+
+        if (isset($row['Max'], $row['Min'])) {
+            return max(0.0, (float) $row['Max'] - (float) $row['Min']);
+        }
+
+        return max(0.0, (float) ($row['Avg'] ?? 0));
+    }
+
+    private function GetCurrentDelta(array $values): float
+    {
+        if (count($values) === 0) {
+            return 0.0;
+        }
+
+        return (float) $values[count($values) - 1]['value'];
+    }
+
+    private function GetPreviousDelta(array $values): float
+    {
+        if (count($values) < 2) {
+            return 0.0;
+        }
+
+        return (float) $values[count($values) - 2]['value'];
+    }
+
+    private function GetPeakDelta(array $values): float
+    {
+        if (count($values) === 0) {
+            return 0.0;
+        }
+
+        return (float) max(array_column($values, 'value'));
     }
 
     private function BuildForecast(array $series): array
@@ -253,13 +296,13 @@ class EnergyConsumptionVisualizer extends IPSModule
     {
         $main = array_values(array_filter($data['series'], static fn ($item) => $item['role'] === 'main'));
         $consumers = array_values(array_filter($data['series'], static fn ($item) => $item['role'] === 'consumer'));
-        $chartSeries = count($main) > 0 ? $main : $data['series'];
 
         $html = '<style>' . $this->GetStyles() . '</style>';
         $html .= '<div class="ecv">';
-        $html .= '<div class="ecv-head"><div><strong>Stromverbrauch</strong><span>' . $this->Escape($data['periodLabel']) . ' &middot; ' . date('d.m.Y H:i', $data['start']) . ' - ' . date('d.m.Y H:i', $data['end']) . '</span></div><span>Aktualisiert ' . date('H:i', $data['generatedAt']) . '</span></div>';
-        $html .= $this->RenderChart($chartSeries);
+        $html .= '<div class="ecv-head"><div><strong>Stromverbrauch</strong><span>Deltas pro ' . $this->Escape($data['periodLabel']) . ' &middot; ' . date('d.m.Y H:i', $data['start']) . ' - ' . date('d.m.Y H:i', $data['end']) . '</span></div><span>Aktualisiert ' . date('H:i', $data['generatedAt']) . '</span></div>';
+        $html .= $this->RenderChart($main, 'Hauptzaehler');
         $html .= $this->RenderSummaryTable('Hauptzaehler', $main);
+        $html .= $this->RenderChart($consumers, 'Weitere Verbraucher');
         $html .= $this->RenderSummaryTable('Weitere Verbraucher', $consumers);
         $html .= '</div>';
 
@@ -287,10 +330,10 @@ class EnergyConsumptionVisualizer extends IPSModule
         return $html;
     }
 
-    private function RenderChart(array $series): string
+    private function RenderChart(array $series, string $title): string
     {
         if (count($series) === 0) {
-            return '<div class="empty">Keine archivierten Variablen konfiguriert.</div>';
+            return '';
         }
 
         $width = 980;
@@ -300,35 +343,55 @@ class EnergyConsumptionVisualizer extends IPSModule
         $plotWidth = $width - $paddingLeft - 18;
         $plotHeight = $height - 28 - $paddingBottom;
         $max = 0.0;
+        $labels = [];
 
         foreach ($series as $item) {
             foreach ($item['values'] as $point) {
                 $max = max($max, (float) $point['value']);
+                $labels[(int) $point['timestamp']] = $point['label'];
             }
+        }
+
+        ksort($labels);
+        $timestamps = array_keys($labels);
+        if (count($timestamps) === 0) {
+            return '<h3>' . $this->Escape($title) . '</h3><div class="empty">Keine Delta-Daten im Zeitraum vorhanden.</div>';
         }
 
         $max = $max > 0 ? $max : 1;
         $colors = ['#2563eb', '#16a34a', '#dc2626', '#9333ea', '#ea580c', '#0891b2', '#4f46e5', '#65a30d'];
+        $groupWidth = $plotWidth / max(1, count($timestamps));
+        $barGap = 3;
+        $barWidth = max(2, min(24, (($groupWidth - 8) / max(1, count($series))) - $barGap));
+        $html = '<h3>' . $this->Escape($title) . '</h3>';
         $svg = '<svg class="chart" viewBox="0 0 ' . $width . ' ' . $height . '" role="img">';
         $svg .= '<line x1="' . $paddingLeft . '" y1="20" x2="' . $paddingLeft . '" y2="' . ($height - $paddingBottom) . '"></line>';
         $svg .= '<line x1="' . $paddingLeft . '" y1="' . ($height - $paddingBottom) . '" x2="' . ($width - 18) . '" y2="' . ($height - $paddingBottom) . '"></line>';
 
         foreach ($series as $index => $item) {
-            $values = $item['values'];
-            if (count($values) === 0) {
+            $pointsByTime = [];
+            foreach ($item['values'] as $point) {
+                $pointsByTime[(int) $point['timestamp']] = (float) $point['value'];
+            }
+
+            foreach ($timestamps as $pointIndex => $timestamp) {
+                $value = $pointsByTime[$timestamp] ?? 0.0;
+                $barHeight = ($value / $max) * $plotHeight;
+                $x = $paddingLeft + ($pointIndex * $groupWidth) + 4 + ($index * ($barWidth + $barGap));
+                $y = 20 + ($plotHeight - $barHeight);
+                $color = $colors[$index % count($colors)];
+                $svg .= '<rect x="' . round($x, 2) . '" y="' . round($y, 2) . '" width="' . round($barWidth, 2) . '" height="' . round($barHeight, 2) . '" style="fill:' . $color . '"><title>' . $this->Escape($item['name']) . ': ' . $this->FormatNumber($value) . '</title></rect>';
+            }
+        }
+
+        $labelStep = max(1, (int) ceil(count($timestamps) / 8));
+        foreach ($timestamps as $index => $timestamp) {
+            if ($index % $labelStep !== 0 && $index !== count($timestamps) - 1) {
                 continue;
             }
 
-            $step = count($values) > 1 ? $plotWidth / (count($values) - 1) : 0;
-            $points = [];
-            foreach ($values as $pointIndex => $point) {
-                $x = $paddingLeft + ($pointIndex * $step);
-                $y = 20 + ($plotHeight - (((float) $point['value'] / $max) * $plotHeight));
-                $points[] = round($x, 2) . ',' . round($y, 2);
-            }
-
-            $color = $colors[$index % count($colors)];
-            $svg .= '<polyline points="' . implode(' ', $points) . '" style="stroke:' . $color . '"></polyline>';
+            $x = $paddingLeft + ($index * $groupWidth) + ($groupWidth / 2);
+            $svg .= '<text class="axis-label" x="' . round($x, 2) . '" y="' . ($height - 18) . '" text-anchor="middle">' . $this->Escape((string) $labels[$timestamp]) . '</text>';
         }
 
         $svg .= '<text x="' . $paddingLeft . '" y="14">Max ' . $this->FormatNumber($max) . '</text>';
@@ -340,7 +403,7 @@ class EnergyConsumptionVisualizer extends IPSModule
         }
         $legend .= '</div>';
 
-        return $svg . $legend;
+        return $html . $svg . $legend;
     }
 
     private function RenderSummaryTable(string $title, array $items): string
@@ -349,13 +412,15 @@ class EnergyConsumptionVisualizer extends IPSModule
             return '';
         }
 
-        $html = '<h3>' . $this->Escape($title) . '</h3><table><thead><tr><th>Name</th><th>Variable</th><th>Summe</th><th>Datenpunkte</th></tr></thead><tbody>';
+        $html = '<table><thead><tr><th>Name</th><th>Variable</th><th>Aktuell</th><th>Vorher</th><th>Max Delta</th><th>Datenpunkte</th></tr></thead><tbody>';
 
         foreach ($items as $item) {
             $html .= '<tr>';
             $html .= '<td>' . $this->Escape($item['name']) . '</td>';
             $html .= '<td>' . (int) $item['variableID'] . '</td>';
-            $html .= '<td>' . $this->FormatNumber($item['total']) . ' ' . $this->Escape($item['unit']) . '</td>';
+            $html .= '<td>' . $this->FormatNumber($item['currentDelta']) . ' ' . $this->Escape($item['unit']) . '</td>';
+            $html .= '<td>' . $this->FormatNumber($item['previousDelta']) . ' ' . $this->Escape($item['unit']) . '</td>';
+            $html .= '<td>' . $this->FormatNumber($item['peakDelta']) . ' ' . $this->Escape($item['unit']) . '</td>';
             $html .= '<td>' . count($item['values']) . '</td>';
             $html .= '</tr>';
         }
@@ -413,12 +478,28 @@ class EnergyConsumptionVisualizer extends IPSModule
     private function GetDateFormatForAggregation(int $aggregation): string
     {
         return match ($aggregation) {
-            0, 5, 6, 8 => 'H:i',
-            1, 2 => 'd.m.',
+            0, 5, 6, 8 => 'd.m. H:i',
+            1 => 'd.m.',
+            2 => '\K\W W',
             3 => 'M',
             4 => 'Y',
             default => 'd.m.',
         };
+    }
+
+    private function GetDeltaLabel(int $timestamp, int $aggregation, string $format): string
+    {
+        if ($aggregation === 1) {
+            if (date('Y-m-d', $timestamp) === date('Y-m-d')) {
+                return 'Heute';
+            }
+
+            if (date('Y-m-d', $timestamp) === date('Y-m-d', strtotime('yesterday'))) {
+                return 'Gestern';
+            }
+        }
+
+        return date($format, $timestamp);
     }
 
     private function GetVariableUnit(int $variableID): string
@@ -436,7 +517,7 @@ class EnergyConsumptionVisualizer extends IPSModule
 
     private function GetStyles(): string
     {
-        return '.ecv{font-family:Arial,sans-serif;color:#1f2937;background:#fff}.ecv-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin:0 0 12px}.ecv-head strong{display:block;font-size:18px}.ecv-head span{display:block;color:#6b7280;font-size:12px;margin-top:3px}.chart{width:100%;height:auto;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb}.chart line{stroke:#9ca3af;stroke-width:1}.chart polyline{fill:none;stroke-width:2.6;stroke-linecap:round;stroke-linejoin:round}.chart text{font-size:12px;fill:#4b5563}.legend{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0 16px}.legend span{display:inline-flex;align-items:center;gap:6px;font-size:12px}.legend i{width:10px;height:10px;border-radius:50%;display:inline-block}h3{font-size:14px;margin:14px 0 6px}table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;border-bottom:1px solid #e5e7eb;padding:7px 8px}th{color:#374151;background:#f3f4f6}.empty{padding:18px;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;color:#6b7280}';
+        return '.ecv{font-family:Arial,sans-serif;color:#1f2937;background:#fff}.ecv-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin:0 0 12px}.ecv-head strong{display:block;font-size:18px}.ecv-head span{display:block;color:#6b7280;font-size:12px;margin-top:3px}.chart{width:100%;height:auto;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb}.chart line{stroke:#9ca3af;stroke-width:1}.chart rect{rx:2;ry:2}.chart text{font-size:12px;fill:#4b5563}.chart .axis-label{font-size:10px}.legend{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0 16px}.legend span{display:inline-flex;align-items:center;gap:6px;font-size:12px}.legend i{width:10px;height:10px;border-radius:50%;display:inline-block}h3{font-size:14px;margin:14px 0 6px}table{border-collapse:collapse;width:100%;font-size:13px;margin-bottom:14px}th,td{text-align:left;border-bottom:1px solid #e5e7eb;padding:7px 8px}th{color:#374151;background:#f3f4f6}.empty{padding:18px;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;color:#6b7280}';
     }
 
     private function FormatNumber(float $value): string
