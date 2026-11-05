@@ -1,123 +1,195 @@
 {
     "elements": [
         {
-            "type": "NumberSpinner",
+            "type": "SelectInstance",
             "name": "ArchiveID",
-            "caption": "Archive Control ID"
+            "caption": "Archiv (leer = Standardarchiv)"
         },
         {
-            "type": "Label",
-            "caption": "Hauptzaehler"
-        },
-        {
-            "type": "NumberSpinner",
-            "name": "L1VariableID",
-            "caption": "Variable ID L1"
-        },
-        {
-            "type": "NumberSpinner",
-            "name": "L2VariableID",
-            "caption": "Variable ID L2"
-        },
-        {
-            "type": "NumberSpinner",
-            "name": "L3VariableID",
-            "caption": "Variable ID L3"
-        },
-        {
-            "type": "NumberSpinner",
-            "name": "TotalVariableID",
-            "caption": "Variable ID Gesamt"
-        },
-        {
-            "type": "Select",
-            "name": "DefaultPeriod",
-            "caption": "Standard-Zeitraum",
-            "options": [
+            "type": "List",
+            "name": "Meters",
+            "caption": "Zähler",
+            "rowCount": 12,
+            "add": true,
+            "delete": true,
+            "changeOrder": true,
+            "columns": [
                 {
-                    "caption": "Stunde",
-                    "value": "hour"
+                    "caption": "Name",
+                    "name": "Name",
+                    "width": "200px",
+                    "add": "",
+                    "edit": {
+                        "type": "ValidationTextBox"
+                    }
                 },
                 {
-                    "caption": "Tag",
-                    "value": "day"
+                    "caption": "Variable",
+                    "name": "VariableID",
+                    "width": "auto",
+                    "add": 0,
+                    "edit": {
+                        "type": "SelectVariable"
+                    }
                 },
                 {
-                    "caption": "Woche",
-                    "value": "week"
+                    "caption": "Gruppe",
+                    "name": "Group",
+                    "width": "150px",
+                    "add": "consumer",
+                    "edit": {
+                        "type": "Select",
+                        "options": [
+                            {
+                                "caption": "Hauptzähler",
+                                "value": "main"
+                            },
+                            {
+                                "caption": "Verbraucher",
+                                "value": "consumer"
+                            }
+                        ]
+                    }
                 },
                 {
-                    "caption": "Jahr",
-                    "value": "year"
+                    "caption": "Quelle",
+                    "name": "Source",
+                    "width": "150px",
+                    "add": "counter",
+                    "edit": {
+                        "type": "Select",
+                        "options": [
+                            {
+                                "caption": "Zählerstand",
+                                "value": "counter"
+                            },
+                            {
+                                "caption": "Impulse",
+                                "value": "impulse"
+                            }
+                        ]
+                    }
                 },
                 {
-                    "caption": "Eigener Zeitraum",
-                    "value": "custom"
+                    "caption": "Einheit (Zählerstand)",
+                    "name": "Unit",
+                    "width": "140px",
+                    "add": "kWh",
+                    "edit": {
+                        "type": "Select",
+                        "options": [
+                            {
+                                "caption": "kWh",
+                                "value": "kWh"
+                            },
+                            {
+                                "caption": "Wh",
+                                "value": "Wh"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "caption": "Impulse pro kWh",
+                    "name": "Impulses",
+                    "width": "130px",
+                    "add": 1000,
+                    "edit": {
+                        "type": "NumberSpinner",
+                        "minimum": 1
+                    }
+                },
+                {
+                    "caption": "Überlauf bei",
+                    "name": "Overflow",
+                    "width": "120px",
+                    "add": 0,
+                    "edit": {
+                        "type": "NumberSpinner",
+                        "minimum": 0
+                    }
+                },
+                {
+                    "caption": "Aktiv",
+                    "name": "Active",
+                    "width": "70px",
+                    "add": true,
+                    "edit": {
+                        "type": "CheckBox"
+                    }
                 }
             ]
         },
         {
-            "type": "ValidationTextBox",
-            "name": "CustomStart",
-            "caption": "Eigener Zeitraum Start",
-            "placeholder": "2026-01-01 00:00"
-        },
-        {
-            "type": "ValidationTextBox",
-            "name": "CustomEnd",
-            "caption": "Eigener Zeitraum Ende",
-            "placeholder": "2026-12-31 23:59"
-        },
-        {
-            "type": "NumberSpinner",
-            "name": "ForecastDays",
-            "caption": "Prognose-Tage",
-            "minimum": 1,
-            "maximum": 365
-        },
-        {
-            "type": "NumberSpinner",
-            "name": "HistoryDays",
-            "caption": "Historie fuer Prognose in Tagen",
-            "minimum": 7,
-            "maximum": 1095
+            "type": "Label",
+            "caption": "Die Variablen müssen im Archiv geloggt sein, am besten als „Zähler“. Bei „Standard“ wird der Verbrauch aus den Zählerständen berechnet. „Überlauf bei“: Wert, bei dem der Zähler wieder bei 0 beginnt (z. B. 65536), 0 = Zähler wird nur zurückgesetzt."
         },
         {
             "type": "ExpansionPanel",
-            "caption": "Weitere Verbraucher",
+            "caption": "Anzeige und Prognose",
             "items": [
                 {
-                    "type": "List",
-                    "name": "Consumers",
-                    "caption": "Bis zu 10 Verbraucher",
-                    "rowCount": 10,
-                    "add": true,
-                    "delete": true,
-                    "sort": {
-                        "column": "Name",
-                        "direction": "ascending"
-                    },
-                    "columns": [
+                    "type": "Select",
+                    "name": "DefaultPeriod",
+                    "caption": "Standard-Zeitraum",
+                    "options": [
                         {
-                            "caption": "Name",
-                            "name": "Name",
-                            "width": "260px",
-                            "add": ""
+                            "caption": "Stunde",
+                            "value": "hour"
                         },
                         {
-                            "caption": "Variable ID",
-                            "name": "VariableID",
-                            "width": "160px",
-                            "add": 0
+                            "caption": "Tag",
+                            "value": "day"
                         },
                         {
-                            "caption": "Aktiv",
-                            "name": "Active",
-                            "width": "120px",
-                            "add": true
+                            "caption": "Woche",
+                            "value": "week"
+                        },
+                        {
+                            "caption": "Jahr",
+                            "value": "year"
+                        },
+                        {
+                            "caption": "Eigener Zeitraum",
+                            "value": "custom"
                         }
-                    ],
-                    "values": []
+                    ]
+                },
+                {
+                    "type": "ValidationTextBox",
+                    "name": "CustomStart",
+                    "caption": "Eigener Zeitraum Start (Vorgabe)",
+                    "placeholder": "2026-01-01 00:00"
+                },
+                {
+                    "type": "ValidationTextBox",
+                    "name": "CustomEnd",
+                    "caption": "Eigener Zeitraum Ende (Vorgabe)",
+                    "placeholder": "2026-12-31 23:59"
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "ForecastDays",
+                    "caption": "Prognose für",
+                    "suffix": "Tage",
+                    "minimum": 1,
+                    "maximum": 365
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "HistoryDays",
+                    "caption": "Basis der Prognose",
+                    "suffix": "Tage",
+                    "minimum": 7,
+                    "maximum": 1095
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "UpdateInterval",
+                    "caption": "Automatisch aktualisieren alle",
+                    "suffix": "Minuten (0 = aus)",
+                    "minimum": 0,
+                    "maximum": 1440
                 }
             ]
         }
@@ -138,12 +210,12 @@
         {
             "code": 201,
             "icon": "error",
-            "caption": "Archive Control ID ist ungueltig"
+            "caption": "Kein Archiv gefunden"
         },
         {
             "code": 202,
             "icon": "error",
-            "caption": "Mindestens eine Variable ist ungueltig oder nicht archiviert"
+            "caption": "Mindestens ein Zähler fehlt oder wird nicht archiviert (Details im Debug)"
         }
     ]
 }
