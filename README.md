@@ -45,6 +45,8 @@ Grundpreise werden zeitanteilig verteilt (Monatsbetrag / Tage des Monats je Tag)
 
 ## Aenderungen
 
+- **2.0.5** – Tageswerte werden automatisch neu eingelesen, wenn die Archivart einer Variable geaendert wird (Standard ↔ Zaehler).
+
 - **2.0.4** – Kacheln nur fuer den gewaehlten Tarif (Haushalt oder Waermepumpe).
 
 - **2.0.3** – Haushalt und Waermepumpe werden getrennt betrachtet: Umschalter Haushalt/Waermepumpe fuer Diagramm, Anteile und Tabelle (inkl. nur des eigenen Grundpreises), keine gemeinsame Summe mehr; Kacheln nur noch je Tarif, ohne Gesamt-Reihe. Phasen nur im Haushalt.

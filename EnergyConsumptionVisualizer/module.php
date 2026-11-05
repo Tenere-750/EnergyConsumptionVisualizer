@@ -370,7 +370,8 @@ class EnergyConsumptionVisualizer extends IPSModule
         $result = [];
 
         foreach ($meters as $meter) {
-            $signature = md5(json_encode([$archive, $meter['id'], $meter['factor'], $meter['overflow']]));
+            // Archivart gehört dazu: nach Umstellung Standard ↔ Zähler wird neu eingelesen
+            $signature = md5(json_encode([$archive, $meter['id'], $meter['factor'], $meter['overflow'], AC_GetAggregationType($archive, $meter['id'])]));
             $entry = $cache[$meter['k']] ?? null;
             $fresh = $entry === null || $entry['sig'] !== $signature;
 
