@@ -1,123 +1,301 @@
 {
     "elements": [
         {
-            "type": "NumberSpinner",
-            "name": "ArchiveID",
-            "caption": "Archive Control ID"
-        },
-        {
-            "type": "Label",
-            "caption": "Hauptzaehler"
-        },
-        {
-            "type": "NumberSpinner",
-            "name": "L1VariableID",
-            "caption": "Variable ID L1"
-        },
-        {
-            "type": "NumberSpinner",
-            "name": "L2VariableID",
-            "caption": "Variable ID L2"
-        },
-        {
-            "type": "NumberSpinner",
-            "name": "L3VariableID",
-            "caption": "Variable ID L3"
-        },
-        {
-            "type": "NumberSpinner",
-            "name": "TotalVariableID",
-            "caption": "Variable ID Gesamt"
-        },
-        {
-            "type": "Select",
-            "name": "DefaultPeriod",
-            "caption": "Standard-Zeitraum",
-            "options": [
+            "type": "List",
+            "name": "Meters",
+            "caption": "Zähler",
+            "rowCount": 10,
+            "add": true,
+            "delete": true,
+            "changeOrder": true,
+            "columns": [
                 {
-                    "caption": "Stunde",
-                    "value": "hour"
+                    "caption": "Name",
+                    "name": "Name",
+                    "width": "180px",
+                    "add": "",
+                    "edit": {
+                        "type": "ValidationTextBox"
+                    }
                 },
                 {
-                    "caption": "Tag",
-                    "value": "day"
+                    "caption": "Variable",
+                    "name": "VariableID",
+                    "width": "auto",
+                    "add": 0,
+                    "edit": {
+                        "type": "SelectVariable"
+                    }
                 },
                 {
-                    "caption": "Woche",
-                    "value": "week"
+                    "caption": "Gruppe",
+                    "name": "Group",
+                    "width": "170px",
+                    "add": "consumer",
+                    "edit": {
+                        "type": "Select",
+                        "options": [
+                            {
+                                "caption": "Gesamtzähler",
+                                "value": "total"
+                            },
+                            {
+                                "caption": "Phase",
+                                "value": "phase"
+                            },
+                            {
+                                "caption": "Verbraucher",
+                                "value": "consumer"
+                            },
+                            {
+                                "caption": "Eigener Zähler",
+                                "value": "separate"
+                            }
+                        ]
+                    }
                 },
                 {
-                    "caption": "Jahr",
-                    "value": "year"
+                    "caption": "Tarif",
+                    "name": "Tariff",
+                    "width": "130px",
+                    "add": "household",
+                    "edit": {
+                        "type": "Select",
+                        "options": [
+                            {
+                                "caption": "Haushalt",
+                                "value": "household"
+                            },
+                            {
+                                "caption": "Wärmepumpe",
+                                "value": "heatpump"
+                            },
+                            {
+                                "caption": "ohne Kosten",
+                                "value": ""
+                            }
+                        ]
+                    }
                 },
                 {
-                    "caption": "Eigener Zeitraum",
-                    "value": "custom"
+                    "caption": "Quelle",
+                    "name": "Source",
+                    "width": "130px",
+                    "add": "counter",
+                    "edit": {
+                        "type": "Select",
+                        "options": [
+                            {
+                                "caption": "Zählerstand",
+                                "value": "counter"
+                            },
+                            {
+                                "caption": "Impulse",
+                                "value": "impulse"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "caption": "Einheit",
+                    "name": "Unit",
+                    "width": "90px",
+                    "add": "kWh",
+                    "edit": {
+                        "type": "Select",
+                        "options": [
+                            {
+                                "caption": "kWh",
+                                "value": "kWh"
+                            },
+                            {
+                                "caption": "Wh",
+                                "value": "Wh"
+                            }
+                        ]
+                    }
+                },
+                {
+                    "caption": "Impulse/kWh",
+                    "name": "Impulses",
+                    "width": "110px",
+                    "add": 1000,
+                    "edit": {
+                        "type": "NumberSpinner",
+                        "minimum": 1
+                    }
+                },
+                {
+                    "caption": "Überlauf bei",
+                    "name": "Overflow",
+                    "width": "110px",
+                    "add": 0,
+                    "edit": {
+                        "type": "NumberSpinner",
+                        "minimum": 0
+                    }
+                },
+                {
+                    "caption": "berücksichtigen",
+                    "name": "Active",
+                    "width": "120px",
+                    "add": true,
+                    "edit": {
+                        "type": "CheckBox"
+                    }
+                },
+                {
+                    "caption": "Bemerkung",
+                    "name": "Note",
+                    "width": "160px",
+                    "add": "",
+                    "edit": {
+                        "type": "ValidationTextBox"
+                    }
                 }
             ]
         },
         {
-            "type": "ValidationTextBox",
-            "name": "CustomStart",
-            "caption": "Eigener Zeitraum Start",
-            "placeholder": "2026-01-01 00:00"
-        },
-        {
-            "type": "ValidationTextBox",
-            "name": "CustomEnd",
-            "caption": "Eigener Zeitraum Ende",
-            "placeholder": "2026-12-31 23:59"
-        },
-        {
-            "type": "NumberSpinner",
-            "name": "ForecastDays",
-            "caption": "Prognose-Tage",
-            "minimum": 1,
-            "maximum": 365
-        },
-        {
-            "type": "NumberSpinner",
-            "name": "HistoryDays",
-            "caption": "Historie fuer Prognose in Tagen",
-            "minimum": 7,
-            "maximum": 1095
+            "type": "Label",
+            "caption": "Jede Zeile ist ein Zähler. Nicht berücksichtigte Zähler (z. B. in Planung, noch ohne Variable) bleiben in der Liste, werden aber nicht ausgewertet. Gesamtzähler: „Rest“ = Gesamt minus Verbraucher mit gleichem Tarif. Eigener Zähler: eigener Kreis, z. B. Wärmepumpe. Einheit gilt für Zählerstände, Impulse/kWh für Impulse. Überlauf bei: Wert, bei dem der Zähler wieder bei 0 beginnt (z. B. 65536), 0 = nur Reset. Die Variablen müssen im Archiv geloggt sein (Zähler oder Standard)."
         },
         {
             "type": "ExpansionPanel",
-            "caption": "Weitere Verbraucher",
+            "caption": "Tarife",
+            "expanded": true,
             "items": [
                 {
+                    "type": "RowLayout",
+                    "items": [
+                        {
+                            "type": "NumberSpinner",
+                            "name": "Price_household",
+                            "caption": "Haushalt Arbeitspreis",
+                            "suffix": "ct/kWh",
+                            "digits": 2,
+                            "minimum": 0
+                        },
+                        {
+                            "type": "NumberSpinner",
+                            "name": "Base_household",
+                            "caption": "Haushalt Grundpreis",
+                            "suffix": "€/Monat",
+                            "digits": 2,
+                            "minimum": 0
+                        }
+                    ]
+                },
+                {
+                    "type": "RowLayout",
+                    "items": [
+                        {
+                            "type": "NumberSpinner",
+                            "name": "Price_heatpump",
+                            "caption": "Wärmepumpe Arbeitspreis",
+                            "suffix": "ct/kWh",
+                            "digits": 2,
+                            "minimum": 0
+                        },
+                        {
+                            "type": "NumberSpinner",
+                            "name": "Base_heatpump",
+                            "caption": "Wärmepumpe Grundpreis",
+                            "suffix": "€/Monat",
+                            "digits": 2,
+                            "minimum": 0
+                        }
+                    ]
+                },
+                {
+                    "type": "Label",
+                    "caption": "Eine Preisänderung gilt ab dem Tag, an dem sie übernommen wird; frühere Zeiträume behalten ihren Preis. Der erste eingetragene Tarif gilt für die gesamte Historie."
+                },
+                {
+                    "type": "CheckBox",
+                    "name": "TariffCorrection",
+                    "caption": "Korrektur: letzten Tarif überschreiben statt neuen Abschnitt anlegen (für Tippfehler, setzt sich danach zurück)"
+                },
+                {
                     "type": "List",
-                    "name": "Consumers",
-                    "caption": "Bis zu 10 Verbraucher",
-                    "rowCount": 10,
-                    "add": true,
-                    "delete": true,
-                    "sort": {
-                        "column": "Name",
-                        "direction": "ascending"
-                    },
+                    "name": "TariffHistoryView",
+                    "caption": "Bisherige Tarife",
+                    "rowCount": 6,
+                    "add": false,
+                    "delete": false,
                     "columns": [
                         {
-                            "caption": "Name",
-                            "name": "Name",
-                            "width": "260px",
-                            "add": ""
+                            "caption": "Tarif",
+                            "name": "Tariff",
+                            "width": "140px"
                         },
                         {
-                            "caption": "Variable ID",
-                            "name": "VariableID",
-                            "width": "160px",
-                            "add": 0
+                            "caption": "gilt ab",
+                            "name": "From",
+                            "width": "130px"
                         },
                         {
-                            "caption": "Aktiv",
-                            "name": "Active",
-                            "width": "120px",
-                            "add": true
+                            "caption": "Arbeitspreis",
+                            "name": "Price",
+                            "width": "150px"
+                        },
+                        {
+                            "caption": "Grundpreis",
+                            "name": "Base",
+                            "width": "auto"
                         }
                     ],
-                    "values": []
+                    "values": "__TARIFF_HISTORY__"
+                }
+            ]
+        },
+        {
+            "type": "ExpansionPanel",
+            "caption": "Anzeige",
+            "items": [
+                {
+                    "type": "ValidationTextBox",
+                    "name": "Title",
+                    "caption": "Überschrift"
+                },
+                {
+                    "type": "Select",
+                    "name": "Theme",
+                    "caption": "Farbschema",
+                    "options": [
+                        {
+                            "caption": "Automatisch (Gerät)",
+                            "value": "auto"
+                        },
+                        {
+                            "caption": "Hell",
+                            "value": "light"
+                        },
+                        {
+                            "caption": "Dunkel",
+                            "value": "dark"
+                        }
+                    ]
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "HourDays",
+                    "caption": "Stundenwerte für die letzten",
+                    "suffix": "Tage",
+                    "minimum": 1,
+                    "maximum": 400
+                },
+                {
+                    "type": "NumberSpinner",
+                    "name": "UpdateInterval",
+                    "caption": "Aktualisieren alle",
+                    "suffix": "Minuten (0 = aus)",
+                    "minimum": 0,
+                    "maximum": 1440
+                },
+                {
+                    "type": "SelectInstance",
+                    "name": "ArchiveID",
+                    "caption": "Archiv (leer = Standardarchiv)"
                 }
             ]
         }
@@ -127,6 +305,11 @@
             "type": "Button",
             "caption": "Jetzt aktualisieren",
             "onClick": "ECV_Refresh($id);"
+        },
+        {
+            "type": "Button",
+            "caption": "Tageswerte neu einlesen",
+            "onClick": "ECV_ResetCache($id);"
         }
     ],
     "status": [
@@ -138,12 +321,12 @@
         {
             "code": 201,
             "icon": "error",
-            "caption": "Archive Control ID ist ungueltig"
+            "caption": "Kein Archiv gefunden"
         },
         {
             "code": 202,
             "icon": "error",
-            "caption": "Mindestens eine Variable ist ungueltig oder nicht archiviert"
+            "caption": "Mindestens ein Zähler fehlt oder wird nicht archiviert (Details im Debug)"
         }
     ]
 }

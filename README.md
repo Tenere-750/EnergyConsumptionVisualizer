@@ -1,28 +1,48 @@
 # Energy Analytics fuer IP-Symcon 9
 
-Dieses Modul visualisiert archivierte Stromverbrauchswerte fuer L1, L2, L3, Gesamt und bis zu 10 frei definierbare Verbraucher.
+Interaktive Verbrauchs- und Kostenuebersicht fuer beliebig viele Stromzaehler – als **eine HTMLBox**, die im WebFront, in der Kachel-Visualisierung und in IPSView laeuft. Umschalten, Blaettern und Zoomen passiert im Browser, ohne Serveraufruf.
 
-## Funktionen
+## Die Ansicht
 
-- Visualisierung als HTMLBox mit Balkendiagramm fuer Verbrauchs-Deltas
-- Eigene Visualisierungen fuer Stunde, Tag, Woche, Jahr und einen selbst definierten Zeitraum
-- Auswahl der angezeigten Kreise direkt im WebFront ueber Schalter
-- Optionaler Vorjahresvergleich im Diagramm, ebenfalls per WebFront-Schalter
-- Anzeige des Delta-Werts direkt am Balken
-- Individueller Zeitraum im WebFront ueber Start, Ende und Update-Button steuerbar, z. B. `05.05.2026 08:00`
-- Jahresuebersicht wahlweise als laufendes Kalenderjahr oder letzte 12 Monate
-- Datenquelle: Archive Control ueber `AC_GetAggregatedValues`
-- Prognose ueber gleitenden Tagesdurchschnitt aus vorhandenen Delta-Archivdaten
-- JSON-Ausgabe ueber `ECV_GetData($InstanzID, $Period)` fuer eigene Skripte
+- Zeitraum **Tag · Woche · Monat · Jahr · Jahre**, Blaettern mit ◀ ▶, „Heute“; Tippen auf einen Balken zoomt hinein (Jahr → Monat → Tag)
+- Einheit **kWh · Euro · Ø Watt**
+- **Verlauf** (gestapelte Balken) oder **Anteile** (Ring)
+- Aufteilung nach **Verbrauchern** (inkl. „Rest“ = Gesamt minus Verbraucher) oder nach **Phasen**
+- **Vorjahr** als Linie und in Prozent – verglichen wird bis zum gleichen Stichtag
+- Kacheln je Tarif (Haushalt, Waermepumpe …) mit Kosten inkl. Grundpreis, Gesamtkosten, Hochrechnung fuer den laufenden Zeitraum
+- Tabelle mit kWh, Anteil, Ø Leistung, Kosten, Vorjahr; Legende zum Ein-/Ausblenden
+- Hell/Dunkel automatisch oder fest; die letzte Auswahl merkt sich der Browser
 
-## Einrichtung
+## Zaehler
 
-1. Repository ueber Module Control einbinden.
-2. Instanz "Stromverbrauch Visualisierung" anlegen.
-3. Archive Control ID und Variablen fuer L1, L2, L3 und Gesamt eintragen.
-4. Bis zu 10 weitere Verbraucher mit Name und Variable ID erfassen.
-5. Im WebFront per Schalter waehlen, welche Kreise angezeigt werden.
-6. Fuer den eigenen Zeitraum im WebFront Start und Ende im Format `TT.MM.JJJJ HH:MM` setzen und `Update` druecken.
-7. Sicherstellen, dass alle Variablen im Archive Control aktiv aggregiert werden.
+Jede Zeile der Liste **Zaehler** ist ein Zaehler:
 
-Die Verbrauchsvariablen sollten als Zaehler im Archiv gefuehrt werden. Dann liefert IP-Symcon pro Aggregationszeitraum im Feld `Avg` die Summe der positiven Deltas, z. B. heute 3 kWh und gestern 15 kWh.
+| Spalte | Bedeutung |
+|---|---|
+| Name, Variable | Anzeigename, Quellvariable (im Archiv geloggt) |
+| Gruppe | **Gesamtzaehler** (daraus „Rest“) · **Phase** · **Verbraucher** · **Eigener Zaehler** (eigener Kreis, z. B. Waermepumpe) |
+| Tarif | Haushalt · Waermepumpe · ohne Kosten |
+| Quelle | **Zaehlerstand** (z. B. KNX DPT 13.010 Wh / 13.013 kWh) oder **Impulse** (z. B. KNX DPT 12.001) |
+| Einheit / Impulse pro kWh | kWh oder Wh beim Zaehlerstand; Impulse je kWh bei Impulsen |
+| Ueberlauf bei | Wert, bei dem der Zaehler wieder bei 0 beginnt (z. B. 65536); 0 = nur Reset |
+| beruecksichtigen | aus = Zaehler bleibt in der Liste, wird aber nicht ausgewertet (z. B. in Planung) |
+| Bemerkung | frei |
+
+Archivierung als **Zaehler** oder **Standard**. Bei *Standard* rechnet das Modul den Verbrauch aus den Zaehlerstaenden; Reset und Ueberlauf werden erkannt (bei Bedarf anhand der Einzelwerte). So lassen sich auch alte, nie als Zaehler archivierte Impulszaehler mit ihrer ganzen Historie auswerten.
+
+## Tarife
+
+In der Instanz stehen nur die **aktuellen** Preise (Arbeitspreis ct/kWh, Grundpreis €/Monat) fuer Haushalt und Waermepumpe. Aendert sich ein Preis, legt das Modul automatisch einen neuen Abschnitt **ab dem Tag der Aenderung** an – fruehere Zeitraeume behalten ihren Preis. Der erste eingetragene Tarif gilt fuer die gesamte Historie. Fuer Tippfehler: Haken **Korrektur** setzen, dann wird der letzte Abschnitt ueberschrieben. Die bisherigen Abschnitte zeigt die Instanz unter „Bisherige Tarife“.
+
+Grundpreise werden zeitanteilig verteilt (Monatsbetrag / Tage des Monats je Tag).
+
+## Technik
+
+- Tageswerte seit Beginn der Aufzeichnung werden zwischengespeichert; je Aktualisierung werden nur die letzten Tage neu gelesen („Tageswerte neu einlesen“ baut den Speicher neu auf).
+- Stundenwerte fuer die letzten n Tage (Standard 35).
+- Daten stecken als JSON in der HTMLBox (Wh, ganze Zahlen); `ECV_GetData($id)` liefert dasselbe JSON fuer eigene Skripte.
+- Ein fehlender Zaehler legt die Anzeige nicht lahm (Status 202, Details im Debug).
+
+## Aenderungen
+
+- **2.0** – Interaktive HTMLBox statt sechs statischer Boxen; Zaehlerliste mit Gruppe, Tarif, Quelle (Zaehlerstand/Impulse), Ueberlauf und „beruecksichtigen“; Tarife mit automatischer Historie; Standard-Archive; Tages-Cache; automatische Aktualisierung. Die Konfiguration aus 1.05 (L1–L3, Gesamt, Verbraucher) wird beim ersten Uebernehmen uebernommen. **Entfallen:** die Variablen *Stunde, Tag, Woche, Jahr, Eigener Zeitraum, Prognose*, die Anzeigen-Schalter und die Zeitraum-Felder – Links darauf im WebFront/IPSView bitte auf die HTMLBox *Stromverbrauch* umstellen.

@@ -2,852 +2,539 @@
 
 declare(strict_types=1);
 
+/**
+ * Energy Analytics – interaktive Verbrauchs- und Kostenübersicht aus dem Archiv
+ *
+ * Zähler (Liste „Meters“), je Zeile:
+ *   Gruppe  total = Gesamtzähler (Rest = Gesamt − Verbraucher) · phase · consumer · separate = eigener Zähler (z. B. Wärmepumpe)
+ *   Quelle  counter = Zählerstand in kWh/Wh (z. B. KNX DPT 13) · impulse = Impulszähler (z. B. KNX DPT 12) mit „Impulse pro kWh“
+ *   Tarif   household | heatpump | '' (ohne Kosten)
+ * Die Variable muss im Archiv geloggt sein – als „Zähler“ oder „Standard“. Bei „Standard“ wird der
+ * Verbrauch aus der Differenz der Zählerstände berechnet (Überlauf/Reset werden erkannt).
+ *
+ * Tarife: In der Instanz steht nur der aktuelle Preis. Ändert er sich, legt das Modul einen neuen
+ * Abschnitt ab dem Tag der Änderung an; frühere Zeiträume behalten ihren Preis. Der erste Tarif gilt
+ * für die gesamte Historie. „Korrektur“ überschreibt den letzten Abschnitt (für Tippfehler).
+ *
+ * Ausgabe: eine HTMLBox (Visualisierung, Bedienung im Browser – kein Serveraufruf beim Umschalten).
+ * Tageswerte werden zwischengespeichert; je Aktualisierung werden nur die letzten Tage neu gelesen.
+ */
 class EnergyConsumptionVisualizer extends IPSModule
 {
     private const STATUS_ARCHIVE_INVALID = 201;
-    private const STATUS_VARIABLE_INVALID = 202;
+    private const STATUS_METER_INVALID   = 202;
 
-    private const PERIODS = [
-        'hour' => ['label' => 'Stunde', 'aggregation' => 0],
-        'day' => ['label' => 'Tag', 'aggregation' => 1],
-        'week' => ['label' => 'Woche', 'aggregation' => 2],
-        'year' => ['label' => 'Monat', 'aggregation' => 3],
-        'custom' => ['label' => 'Intervall', 'aggregation' => 1],
+    private const ARCHIVE_MODULE = '{43192F0B-135B-4CE7-A0A7-1475603F3060}';
+    private const AGG_HOUR = 0, AGG_DAY = 1, AGG_YEAR = 4;
+
+    private const TARIFFS = ['household' => 'Haushalt', 'heatpump' => 'Wärmepumpe'];
+    private const GROUPS  = ['total', 'phase', 'consumer', 'separate'];
+    private const FIRST_DAY = '1970-01-01';     // „gilt seit Beginn“
+    private const REREAD_DAYS = 2;               // so viele zurückliegende Tage je Aktualisierung neu lesen
+
+    // Variablen aus Version ≤ 1.05, die es nicht mehr gibt
+    private const OBSOLETE_IDENTS = [
+        'HourVisualization', 'DayVisualization', 'WeekVisualization', 'YearVisualization', 'CustomVisualization', 'Forecast',
+        'ShowPreviousYear', 'YearLast12Months', 'CustomStartText', 'CustomEndText', 'CustomStartTimestamp', 'CustomEndTimestamp',
+        'UpdateVisualization',
     ];
+
+    /** @var array<string, array> Archivabfragen innerhalb eines Aufrufs */
+    private array $cache = [];
+
+    // ===================================================================
+    // Lebenszyklus
+    // ===================================================================
 
     public function Create(): void
     {
         parent::Create();
 
         $this->RegisterPropertyInteger('ArchiveID', 0);
-        $this->RegisterPropertyInteger('L1VariableID', 0);
-        $this->RegisterPropertyInteger('L2VariableID', 0);
-        $this->RegisterPropertyInteger('L3VariableID', 0);
-        $this->RegisterPropertyInteger('TotalVariableID', 0);
+        $this->RegisterPropertyString('Meters', '[]');
+        $this->RegisterPropertyString('Title', 'Stromverbrauch');
+        $this->RegisterPropertyString('Theme', 'auto');
+        $this->RegisterPropertyInteger('HourDays', 35);
+        $this->RegisterPropertyInteger('UpdateInterval', 15);
+        foreach (array_keys(self::TARIFFS) as $t) {
+            $this->RegisterPropertyFloat("Price_$t", 0.0);   // ct/kWh
+            $this->RegisterPropertyFloat("Base_$t", 0.0);    // €/Monat
+        }
+        $this->RegisterPropertyBoolean('TariffCorrection', false);
+
+        // Nur noch für die Übernahme alter Konfigurationen (≤ 1.05)
+        foreach (['L1VariableID', 'L2VariableID', 'L3VariableID', 'TotalVariableID'] as $legacy) {
+            $this->RegisterPropertyInteger($legacy, 0);
+        }
         $this->RegisterPropertyString('Consumers', '[]');
-        $this->RegisterPropertyString('DefaultPeriod', 'day');
-        $this->RegisterPropertyString('CustomStart', '');
-        $this->RegisterPropertyString('CustomEnd', '');
-        $this->RegisterPropertyInteger('ForecastDays', 30);
-        $this->RegisterPropertyInteger('HistoryDays', 90);
 
-        $this->RegisterAttributeString('LastDataJson', '{}');
-
-        $this->MaintainProfiles();
-
-        $this->RegisterVariableBoolean('ShowL1', 'Anzeigen L1', '~Switch', 1);
-        $this->SetValue('ShowL1', true);
-        $this->EnableAction('ShowL1');
-        $this->RegisterVariableBoolean('ShowL2', 'Anzeigen L2', '~Switch', 2);
-        $this->SetValue('ShowL2', true);
-        $this->EnableAction('ShowL2');
-        $this->RegisterVariableBoolean('ShowL3', 'Anzeigen L3', '~Switch', 3);
-        $this->SetValue('ShowL3', true);
-        $this->EnableAction('ShowL3');
-        $this->RegisterVariableBoolean('ShowTotal', 'Anzeigen Gesamt', '~Switch', 4);
-        $this->SetValue('ShowTotal', true);
-        $this->EnableAction('ShowTotal');
-        $this->RegisterVariableBoolean('ShowPreviousYear', 'Vorjahr anzeigen', '~Switch', 5);
-        $this->SetValue('ShowPreviousYear', false);
-        $this->EnableAction('ShowPreviousYear');
-        $this->RegisterVariableBoolean('YearLast12Months', 'Jahr: letzte 12 Monate', '~Switch', 6);
-        $this->SetValue('YearLast12Months', false);
-        $this->EnableAction('YearLast12Months');
-        $this->RegisterVariableString('CustomStartText', 'Zeitraum Start', '', 30);
-        $this->SetValue('CustomStartText', date('d.m.Y H:i', strtotime('today 00:00')));
-        $this->EnableAction('CustomStartText');
-        $this->RegisterVariableString('CustomEndText', 'Zeitraum Ende', '', 31);
-        $this->SetValue('CustomEndText', date('d.m.Y H:i'));
-        $this->EnableAction('CustomEndText');
-        $this->RegisterVariableInteger('UpdateVisualization', 'Update', 'ECV.UpdateButton', 32);
-        $this->EnableAction('UpdateVisualization');
-
-        $this->RegisterVariableString('Visualization', 'Uebersicht', '~HTMLBox', 100);
-        $this->RegisterVariableString('HourVisualization', 'Stunde', '~HTMLBox', 110);
-        $this->RegisterVariableString('DayVisualization', 'Tag', '~HTMLBox', 120);
-        $this->RegisterVariableString('WeekVisualization', 'Woche', '~HTMLBox', 130);
-        $this->RegisterVariableString('YearVisualization', 'Jahr', '~HTMLBox', 140);
-        $this->RegisterVariableString('CustomVisualization', 'Eigener Zeitraum', '~HTMLBox', 150);
-        $this->RegisterVariableString('Forecast', 'Prognose', '~HTMLBox', 160);
+        $this->RegisterAttributeString('TariffHistory', '{}');
+        $this->RegisterAttributeString('DayCache', '{}');
+        $this->RegisterTimer('Update', 0, 'ECV_Refresh($_IPS[\'TARGET\']);');
     }
 
     public function ApplyChanges(): void
     {
         parent::ApplyChanges();
 
-        $this->MaintainProfiles();
-        $this->MaintainSelectionVariables();
-        $this->MaintainCustomRangeVariables();
-        $this->MaintainOutputVariables();
-        $this->MaintainReferences();
-        if (!$this->ValidateConfiguration()) {
-            return;
+        if ($this->MigrateLegacyConfiguration() || $this->UpdateTariffHistory()) {
+            return;   // IPS_ApplyChanges läuft mit der bereinigten Konfiguration erneut
         }
 
-        $this->SetStatus(IS_ACTIVE);
+        foreach (self::OBSOLETE_IDENTS as $ident) {
+            $this->UnregisterVariable($ident);
+        }
+        foreach (IPS_GetChildrenIDs($this->InstanceID) as $child) {   // ShowL1 … ShowConsumer10
+            if (str_starts_with(IPS_GetObject($child)['ObjectIdent'], 'Show')) {
+                $this->UnregisterVariable(IPS_GetObject($child)['ObjectIdent']);
+            }
+        }
+        $this->MaintainVariable('Visualization', $this->ReadPropertyString('Title'), VARIABLETYPE_STRING, '~HTMLBox', 100, true);
+
+        $this->MaintainReferences();
+        $this->SetTimerInterval('Update', max(0, $this->ReadPropertyInteger('UpdateInterval')) * 60 * 1000);
+
+        if (IPS_GetKernelRunlevel() !== KR_READY) {
+            $this->RegisterMessage(0, IPS_KERNELSTARTED);   // Archiv ist erst nach dem Start lesbar
+            return;
+        }
         $this->Refresh();
     }
 
+    public function MessageSink($TimeStamp, $SenderID, $Message, $Data): void
+    {
+        if ($Message === IPS_KERNELSTARTED) {
+            $this->Refresh();
+        }
+    }
+
+    public function GetConfigurationForm(): string
+    {
+        $form = json_decode(file_get_contents(__DIR__ . '/form.json'), true);
+        $rows = [];
+        foreach ($this->TariffHistory() as $t => $list) {
+            foreach (array_reverse($list) as $entry) {
+                $rows[] = [
+                    'Tariff' => self::TARIFFS[$t],
+                    'From'   => $entry['from'] === self::FIRST_DAY ? 'seit Beginn' : date('d.m.Y', strtotime($entry['from'])),
+                    'Price'  => number_format($entry['ap'], 2, ',', '.') . ' ct/kWh',
+                    'Base'   => number_format($entry['gp'], 2, ',', '.') . ' €/Monat',
+                ];
+            }
+        }
+        array_walk_recursive($form, static function (&$value, $key) use ($rows) {
+            if ($key === 'values' && $value === '__TARIFF_HISTORY__') {
+                $value = $rows;
+            }
+        });
+        return json_encode($form);
+    }
+
+    // ===================================================================
+    // Öffentliche Funktionen
+    // ===================================================================
+
     public function Refresh(): void
     {
-        if (!$this->ValidateConfiguration()) {
+        $data = $this->BuildData();
+        if ($data === null) {
             return;
         }
-
-        $allData = [];
-        foreach (['hour', 'day', 'week', 'year', 'custom'] as $period) {
-            $allData[$period] = $this->BuildDashboardData($period);
-        }
-
-        $data = $allData[$this->ReadPropertyString('DefaultPeriod')] ?? $allData['day'];
-        $this->WriteAttributeString('LastDataJson', json_encode($allData, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-
-        $this->SetValue('Visualization', $this->RenderDashboard($data));
-        $this->SetValue('HourVisualization', $this->RenderDashboard($allData['hour']));
-        $this->SetValue('DayVisualization', $this->RenderDashboard($allData['day']));
-        $this->SetValue('WeekVisualization', $this->RenderDashboard($allData['week']));
-        $this->SetValue('YearVisualization', $this->RenderDashboard($allData['year']));
-        $this->SetValue('CustomVisualization', $this->RenderDashboard($allData['custom']));
-        $this->SetValue('Forecast', $this->RenderForecast($data['forecast']));
-    }
-
-    public function RequestAction($Ident, $Value): void
-    {
-        $ident = (string) $Ident;
-        if ($this->IsSelectionIdent($ident) && $this->IdentExists($ident)) {
-            $this->SetValue($ident, (bool) $Value);
-            $this->Refresh();
-            return;
-        }
-
-        if (in_array($ident, ['CustomStartText', 'CustomEndText'], true) && $this->IdentExists($ident)) {
-            $this->SetValue($ident, trim((string) $Value));
-            return;
-        }
-
-        if ($ident === 'UpdateVisualization') {
-            $this->SetValue('UpdateVisualization', 0);
-            $this->Refresh();
-            return;
-        }
-
-        throw new Exception('Invalid ident');
-    }
-
-    public function GetData(string $Period = ''): string
-    {
-        if (!$this->ValidateConfiguration()) {
-            return json_encode(['error' => 'invalid configuration']);
-        }
-
-        $period = $Period === '' ? $this->ReadPropertyString('DefaultPeriod') : $Period;
-        return json_encode($this->BuildDashboardData($period), JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
-    }
-
-    private function MaintainReferences(): void
-    {
-        foreach ($this->GetConfiguredSeries() as $series) {
-            if ($series['id'] > 0) {
-                $this->RegisterReference($series['id']);
-            }
-        }
-
-        $archiveID = $this->GetArchiveID();
-        if ($archiveID > 0) {
-            $this->RegisterReference($archiveID);
+        $html = str_replace(
+            ['__THEME__', '__DATA__'],
+            [$this->ReadPropertyString('Theme'), json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)],
+            file_get_contents(__DIR__ . '/box.html')
+        );
+        if ($this->GetValue('Visualization') !== $html) {
+            $this->SetValue('Visualization', $html);
         }
     }
 
-    private function ValidateConfiguration(): bool
+    /** Alle Daten der Visualisierung als JSON (Tages-/Stundenwerte in Wh, Tarife) */
+    public function GetData(): string
     {
-        $archiveID = $this->GetArchiveID();
-        if ($archiveID <= 0 || !IPS_InstanceExists($archiveID)) {
-            $this->SetStatus(self::STATUS_ARCHIVE_INVALID);
-            return false;
-        }
+        return json_encode($this->BuildData() ?? ['error' => 'invalid configuration'], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+    }
 
-        foreach ($this->GetConfiguredSeries() as $series) {
-            if ($series['id'] <= 0) {
+    /** Tageswerte beim nächsten Refresh komplett neu aus dem Archiv lesen */
+    public function ResetCache(): void
+    {
+        $this->WriteAttributeString('DayCache', '{}');
+        $this->Refresh();
+    }
+
+    // ===================================================================
+    // Konfiguration
+    // ===================================================================
+
+    /** @return array<int, array{k:string, name:string, id:int, group:string, tariff:string, factor:float, overflow:float}> */
+    private function Meters(): array
+    {
+        $rows = json_decode($this->ReadPropertyString('Meters'), true);
+        $meters = [];
+        foreach (is_array($rows) ? $rows : [] as $index => $row) {
+            $id = (int) ($row['VariableID'] ?? 0);
+            if ($id <= 0 || !($row['Active'] ?? true)) {
                 continue;
             }
+            $name = trim((string) ($row['Name'] ?? ''));
+            $tariff = (string) ($row['Tariff'] ?? 'household');
+            $meters[] = [
+                'k'        => 'm' . $id,
+                'name'     => $name !== '' ? $name : 'Zähler ' . ($index + 1),
+                'id'       => $id,
+                'group'    => in_array($row['Group'] ?? '', self::GROUPS, true) ? $row['Group'] : 'consumer',
+                'tariff'   => isset(self::TARIFFS[$tariff]) ? $tariff : '',
+                'factor'   => ($row['Source'] ?? 'counter') === 'impulse'
+                    ? 1 / max(1, (float) ($row['Impulses'] ?? 1000))
+                    : (($row['Unit'] ?? 'kWh') === 'Wh' ? 0.001 : 1.0),
+                'overflow' => max(0.0, (float) ($row['Overflow'] ?? 0)),
+            ];
+        }
+        return $meters;
+    }
 
-            if (!IPS_VariableExists($series['id']) || !$this->IsArchived($archiveID, $series['id'])) {
-                $this->SetStatus(self::STATUS_VARIABLE_INVALID);
-                return false;
+    private function ArchiveID(): int
+    {
+        $id = $this->ReadPropertyInteger('ArchiveID');
+        if ($id > 0 && IPS_InstanceExists($id)) {
+            return $id;
+        }
+        return IPS_GetInstanceListByModuleID(self::ARCHIVE_MODULE)[0] ?? 0;
+    }
+
+    /** Auswertbare Zähler oder null, wenn das Archiv fehlt; setzt den Status */
+    private function ValidMeters(): ?array
+    {
+        $archive = $this->ArchiveID();
+        if ($archive === 0) {
+            $this->SetStatus(self::STATUS_ARCHIVE_INVALID);
+            return null;
+        }
+        $valid = $invalid = [];
+        foreach ($this->Meters() as $meter) {
+            if (IPS_VariableExists($meter['id']) && AC_GetLoggingStatus($archive, $meter['id'])) {
+                $valid[] = $meter;
+            } else {
+                $invalid[] = "{$meter['name']} (#{$meter['id']})";
             }
         }
+        if ($invalid) {
+            $this->SendDebug('Ungültige Zähler', implode(', ', $invalid), 0);
+        }
+        $this->SetStatus($invalid ? self::STATUS_METER_INVALID : IS_ACTIVE);   // gültige Zähler werden trotzdem angezeigt
+        return $valid;
+    }
 
+    /** Übernimmt L1–L3/Gesamt/Verbraucher aus Version ≤ 1.05 (einmalig) */
+    private function MigrateLegacyConfiguration(): bool
+    {
+        if ($this->ReadPropertyString('Meters') !== '[]') {
+            return false;
+        }
+        $row = static fn (string $name, int $id, string $group, bool $active = true) =>
+            ['Name' => $name, 'VariableID' => $id, 'Group' => $group, 'Tariff' => 'household', 'Source' => 'counter', 'Unit' => 'kWh', 'Impulses' => 1000, 'Overflow' => 0, 'Active' => $active];
+        $meters = [];
+        if (($id = $this->ReadPropertyInteger('TotalVariableID')) > 0) {
+            $meters[] = $row('Gesamt', $id, 'total');
+        }
+        foreach (['L1', 'L2', 'L3'] as $phase) {
+            if (($id = $this->ReadPropertyInteger("{$phase}VariableID")) > 0) {
+                $meters[] = $row($phase, $id, 'phase');
+            }
+        }
+        $consumers = json_decode($this->ReadPropertyString('Consumers'), true);
+        foreach (is_array($consumers) ? $consumers : [] as $c) {
+            if (($id = (int) ($c['VariableID'] ?? 0)) > 0) {
+                $meters[] = $row((string) ($c['Name'] ?? ''), $id, 'consumer', (bool) ($c['Active'] ?? true));
+            }
+        }
+        if (!$meters) {
+            return false;
+        }
+        IPS_SetProperty($this->InstanceID, 'Meters', json_encode($meters));
+        foreach (['L1VariableID', 'L2VariableID', 'L3VariableID', 'TotalVariableID'] as $legacy) {
+            IPS_SetProperty($this->InstanceID, $legacy, 0);
+        }
+        IPS_SetProperty($this->InstanceID, 'Consumers', '[]');
+        IPS_ApplyChanges($this->InstanceID);
         return true;
     }
 
-    private function MaintainProfiles(): void
-    {
-        if (!IPS_VariableProfileExists('ECV.UpdateButton')) {
-            IPS_CreateVariableProfile('ECV.UpdateButton', VARIABLETYPE_INTEGER);
-        }
+    // ===================================================================
+    // Tarife
+    // ===================================================================
 
-        IPS_SetVariableProfileAssociation('ECV.UpdateButton', 0, 'Aktualisieren', '', 0x2563EB);
+    /** @return array<string, array<int, array{from:string, ap:float, gp:float}>> */
+    private function TariffHistory(): array
+    {
+        $history = json_decode($this->ReadAttributeString('TariffHistory'), true);
+        return is_array($history) ? $history : [];
     }
 
-    private function MaintainSelectionVariables(): void
+    /**
+     * Schreibt eine Preisänderung als neuen Abschnitt ab heute fort.
+     * Liefert true, wenn die Instanz erneut übernommen wird (Korrektur-Haken zurücksetzen).
+     */
+    private function UpdateTariffHistory(): bool
     {
-        $previousYearExisted = $this->IdentExists('ShowPreviousYear');
-        $this->MaintainVariable('ShowPreviousYear', 'Vorjahr anzeigen', VARIABLETYPE_BOOLEAN, '~Switch', 5, true);
-        $this->EnableAction('ShowPreviousYear');
-        if (!$previousYearExisted) {
-            $this->SetValue('ShowPreviousYear', false);
-        }
+        $history = $this->TariffHistory();
+        $today = date('Y-m-d');
+        $correction = $this->ReadPropertyBoolean('TariffCorrection');
 
-        $yearLast12MonthsExisted = $this->IdentExists('YearLast12Months');
-        $this->MaintainVariable('YearLast12Months', 'Jahr: letzte 12 Monate', VARIABLETYPE_BOOLEAN, '~Switch', 6, true);
-        $this->EnableAction('YearLast12Months');
-        if (!$yearLast12MonthsExisted) {
-            $this->SetValue('YearLast12Months', false);
-        }
+        foreach (array_keys(self::TARIFFS) as $t) {
+            $price = ['ap' => round($this->ReadPropertyFloat("Price_$t"), 4), 'gp' => round($this->ReadPropertyFloat("Base_$t"), 4)];
+            $list = $history[$t] ?? [];
+            $last = end($list) ?: null;
 
-        foreach ($this->GetConfiguredSeries() as $index => $series) {
-            $ident = $series['showIdent'];
-            if ($ident === '') {
-                continue;
-            }
-
-            $visible = $series['id'] > 0;
-            $existed = $this->IdentExists($ident);
-            $position = $series['role'] === 'main' ? 1 + $index : 10 + $index;
-            $this->MaintainVariable($ident, 'Anzeigen ' . $series['name'], VARIABLETYPE_BOOLEAN, '~Switch', $position, $visible);
-
-            if ($visible) {
-                $this->EnableAction($ident);
-                if (!$existed) {
-                    $this->SetValue($ident, true);
+            if ($last === null) {
+                if ($price['ap'] > 0 || $price['gp'] > 0) {
+                    $list[] = ['from' => self::FIRST_DAY] + $price;   // erster Tarif gilt für die gesamte Historie
                 }
+            } elseif ($last['ap'] !== $price['ap'] || $last['gp'] !== $price['gp']) {
+                if ($correction || $last['from'] === $today) {
+                    $list[array_key_last($list)] = ['from' => $last['from']] + $price;   // letzten Abschnitt berichtigen
+                } else {
+                    $list[] = ['from' => $today] + $price;                                // neuer Abschnitt ab heute
+                }
+                $this->LogMessage(sprintf('Tarif %s: %s ct/kWh, %s €/Monat ab %s', self::TARIFFS[$t], $price['ap'], $price['gp'],
+                    $correction ? 'Korrektur des letzten Abschnitts' : $today), KL_NOTIFY);
             }
+            $history[$t] = $list;
         }
+        $this->WriteAttributeString('TariffHistory', json_encode($history));
 
-        for ($index = 1; $index <= 10; $index++) {
-            $ident = 'ShowConsumer' . $index;
-            if (!$this->IsConfiguredConsumerIdent($ident)) {
-                $this->MaintainVariable($ident, 'Anzeigen Verbraucher ' . $index, VARIABLETYPE_BOOLEAN, '~Switch', 10 + $index, false);
-            }
-        }
-    }
-
-    private function MaintainCustomRangeVariables(): void
-    {
-        $startExisted = $this->IdentExists('CustomStartText');
-        $this->MaintainVariable('CustomStartText', 'Zeitraum Start', VARIABLETYPE_STRING, '', 30, true);
-        $this->EnableAction('CustomStartText');
-        if (!$startExisted) {
-            $this->SetValue('CustomStartText', date('d.m.Y H:i', $this->GetConfiguredCustomStart()));
-        }
-
-        $endExisted = $this->IdentExists('CustomEndText');
-        $this->MaintainVariable('CustomEndText', 'Zeitraum Ende', VARIABLETYPE_STRING, '', 31, true);
-        $this->EnableAction('CustomEndText');
-        if (!$endExisted) {
-            $this->SetValue('CustomEndText', date('d.m.Y H:i', $this->GetConfiguredCustomEnd()));
-        }
-
-        $this->MaintainVariable('CustomStartTimestamp', 'Zeitraum Start Unix', VARIABLETYPE_INTEGER, '~UnixTimestamp', 30, false);
-        $this->MaintainVariable('CustomEndTimestamp', 'Zeitraum Ende Unix', VARIABLETYPE_INTEGER, '~UnixTimestamp', 31, false);
-
-        $this->MaintainVariable('UpdateVisualization', 'Update', VARIABLETYPE_INTEGER, 'ECV.UpdateButton', 32, true);
-        $this->EnableAction('UpdateVisualization');
-        $this->SetValue('UpdateVisualization', 0);
-    }
-
-    private function MaintainOutputVariables(): void
-    {
-        $this->MaintainVariable('Visualization', 'Uebersicht', VARIABLETYPE_STRING, '~HTMLBox', 100, true);
-        $this->MaintainVariable('HourVisualization', 'Stunde', VARIABLETYPE_STRING, '~HTMLBox', 110, true);
-        $this->MaintainVariable('DayVisualization', 'Tag', VARIABLETYPE_STRING, '~HTMLBox', 120, true);
-        $this->MaintainVariable('WeekVisualization', 'Woche', VARIABLETYPE_STRING, '~HTMLBox', 130, true);
-        $this->MaintainVariable('YearVisualization', 'Jahr', VARIABLETYPE_STRING, '~HTMLBox', 140, true);
-        $this->MaintainVariable('CustomVisualization', 'Eigener Zeitraum', VARIABLETYPE_STRING, '~HTMLBox', 150, true);
-        $this->MaintainVariable('Forecast', 'Prognose', VARIABLETYPE_STRING, '~HTMLBox', 160, true);
-    }
-
-    private function IsSelectionIdent(string $ident): bool
-    {
-        if (in_array($ident, ['ShowL1', 'ShowL2', 'ShowL3', 'ShowTotal'], true)) {
+        if ($correction) {
+            IPS_SetProperty($this->InstanceID, 'TariffCorrection', false);
+            IPS_ApplyChanges($this->InstanceID);
             return true;
         }
-
-        return in_array($ident, ['ShowPreviousYear', 'YearLast12Months'], true) || (bool) preg_match('/^ShowConsumer([1-9]|10)$/', $ident);
-    }
-
-    private function IsSeriesVisible(string $ident): bool
-    {
-        if ($ident === '' || !$this->IdentExists($ident)) {
-            return true;
-        }
-
-        return (bool) $this->GetValue($ident);
-    }
-
-    private function IsConfiguredConsumerIdent(string $ident): bool
-    {
-        foreach ($this->GetConfiguredSeries() as $series) {
-            if (($series['showIdent'] ?? '') === $ident && $series['id'] > 0) {
-                return true;
-            }
-        }
-
         return false;
     }
 
-    private function IdentExists(string $ident): bool
-    {
-        return @IPS_GetObjectIDByIdent($ident, $this->InstanceID) !== false;
-    }
+    // ===================================================================
+    // Daten aufbereiten
+    // ===================================================================
 
-    private function BuildDashboardData(string $period): array
+    private function BuildData(): ?array
     {
-        if (!array_key_exists($period, self::PERIODS)) {
-            $period = 'day';
+        $meters = $this->ValidMeters();
+        if ($meters === null) {
+            return null;
         }
 
-        [$start, $end, $aggregation] = $this->ResolveRange($period);
-        $showPreviousYear = $this->IdentExists('ShowPreviousYear') && (bool) $this->GetValue('ShowPreviousYear');
-        $series = [];
+        $days = $this->DailyValues($meters);
+        $day0 = $days ? min(array_column($days, 'start')) : date('Y-m-d');
+        $dayValues = [];
+        foreach ($meters as $meter) {
+            $series = $days[$meter['k']] ?? ['start' => $day0, 'wh' => []];
+            $dayValues[$meter['k']] = array_merge(array_fill(0, $this->DayIndex($day0, $series['start']), null), $series['wh']);
+        }
 
-        foreach ($this->GetConfiguredSeries() as $definition) {
-            if ($definition['id'] <= 0) {
-                continue;
-            }
+        $hourDays = max(1, $this->ReadPropertyInteger('HourDays'));
+        $hour0 = strtotime('-' . ($hourDays - 1) . ' days', strtotime('today'));
+        $hourValues = [];
+        foreach ($meters as $meter) {
+            $hourValues[$meter['k']] = $this->ToWh($this->ReadConsumption($meter, self::AGG_HOUR, $hour0, time()));
+        }
 
-            if (!$this->IsSeriesVisible($definition['showIdent'])) {
-                continue;
-            }
-
-            $values = $this->ReadAggregatedValues($definition['id'], $aggregation, $start, $end);
-            $previousYearValues = [];
-            if ($showPreviousYear) {
-                [$previousYearStart, $previousYearEnd] = $this->GetPreviousYearRange($start, $end);
-                $previousYearValues = $this->AlignPreviousYearValues(
-                    $values,
-                    $this->ReadAggregatedValues($definition['id'], $aggregation, $previousYearStart, $previousYearEnd)
-                );
-            }
-
-            $series[] = [
-                'name' => $definition['name'],
-                'role' => $definition['role'],
-                'variableID' => $definition['id'],
-                'unit' => $this->GetVariableUnit($definition['id']),
-                'currentDelta' => $this->GetCurrentDelta($values),
-                'previousDelta' => $this->GetPreviousDelta($values),
-                'peakDelta' => $this->GetPeakDelta($values),
-                'values' => $values,
-                'previousYearValues' => $previousYearValues,
-            ];
+        $tariffs = [];
+        foreach ($this->TariffHistory() as $t => $list) {
+            $tariffs[$t] = $list;
         }
 
         return [
-            'generatedAt' => time(),
-            'period' => $period,
-            'periodLabel' => self::PERIODS[$period]['label'],
-            'start' => $start,
-            'end' => $end,
-            'aggregation' => $aggregation,
-            'showPreviousYear' => $showPreviousYear,
-            'series' => $series,
-            'forecast' => $this->BuildForecast($series),
+            'id'          => $this->InstanceID,
+            'title'       => $this->ReadPropertyString('Title'),
+            'generated'   => time() * 1000,
+            'meters'      => array_map(static fn ($m) => ['k' => $m['k'], 'name' => $m['name'], 'group' => $m['group'], 'tariff' => $m['tariff']], $meters),
+            'tariffNames' => self::TARIFFS,
+            'tariffs'     => $tariffs,
+            'day0'        => $day0,
+            'days'        => $dayValues,
+            'hour0'       => date('Y-m-d', $hour0),
+            'hourDays'    => $hourDays,
+            'hours'       => $hourValues,
         ];
     }
 
-    private function GetPreviousYearRange(int $start, int $end): array
+    /**
+     * Tageswerte je Zähler in Wh seit Beginn der Aufzeichnung. Abgeschlossene Tage kommen aus dem
+     * Zwischenspeicher, nur die letzten Tage werden neu gelesen.
+     * @return array<string, array{start:string, wh:array}>
+     */
+    private function DailyValues(array $meters): array
     {
-        return [
-            strtotime('-1 year', $start),
-            strtotime('-1 year', $end),
-        ];
-    }
+        $cache = json_decode($this->ReadAttributeString('DayCache'), true) ?: [];
+        $archive = $this->ArchiveID();
+        $result = [];
 
-    private function AlignPreviousYearValues(array $currentValues, array $previousYearValues): array
-    {
-        $alignedValues = [];
-        $previousValues = array_values($previousYearValues);
+        foreach ($meters as $meter) {
+            $signature = md5(json_encode([$archive, $meter['id'], $meter['factor'], $meter['overflow']]));
+            $entry = $cache[$meter['k']] ?? null;
+            $fresh = $entry === null || $entry['sig'] !== $signature;
 
-        foreach (array_values($currentValues) as $index => $currentValue) {
-            $previousValue = $previousValues[$index]['value'] ?? 0.0;
-            $alignedValues[] = [
-                'timestamp' => (int) $currentValue['timestamp'],
-                'label' => (string) $currentValue['label'],
-                'value' => round((float) $previousValue, 3),
-            ];
-        }
-
-        return $alignedValues;
-    }
-
-    private function ResolveRange(string $period): array
-    {
-        $now = time();
-        $aggregation = self::PERIODS[$period]['aggregation'];
-
-        if ($period === 'custom') {
-            $start = $this->GetCustomStart();
-            $end = $this->GetCustomEnd();
-            if ($end <= $start) {
-                $end = $now;
-            }
-
-            $days = max(1, (int) ceil(($end - $start) / 86400));
-            if ($days > 370) {
-                $aggregation = 3;
-            } elseif ($days > 45) {
-                $aggregation = 2;
-            } elseif ($days <= 2) {
-                $aggregation = 0;
-            }
-
-            return [$start, $end, $aggregation];
-        }
-
-        if ($period === 'hour') {
-            return [strtotime('-23 hours', strtotime(date('Y-m-d H:00:00'))), $now, $aggregation];
-        }
-
-        if ($period === 'day') {
-            return [strtotime('-13 days 00:00'), $now, $aggregation];
-        }
-
-        if ($period === 'week') {
-            return [strtotime('-11 weeks', strtotime('monday this week 00:00')), $now, $aggregation];
-        }
-
-        if ($this->IdentExists('YearLast12Months') && (bool) $this->GetValue('YearLast12Months')) {
-            return [strtotime('first day of this month 00:00 -11 months'), $now, $aggregation];
-        }
-
-        return [strtotime('first day of january this year 00:00'), $now, $aggregation];
-    }
-
-    private function GetCustomStart(): int
-    {
-        if ($this->IdentExists('CustomStartText')) {
-            $value = $this->ParseHumanDate((string) $this->GetValue('CustomStartText'));
-            if ($value > 0) {
-                return $value;
-            }
-        }
-
-        return $this->GetConfiguredCustomStart();
-    }
-
-    private function GetCustomEnd(): int
-    {
-        if ($this->IdentExists('CustomEndText')) {
-            $value = $this->ParseHumanDate((string) $this->GetValue('CustomEndText'));
-            if ($value > 0) {
-                return $value;
-            }
-        }
-
-        return $this->GetConfiguredCustomEnd();
-    }
-
-    private function GetConfiguredCustomStart(): int
-    {
-        return strtotime($this->ReadPropertyString('CustomStart')) ?: strtotime('today 00:00');
-    }
-
-    private function GetConfiguredCustomEnd(): int
-    {
-        return strtotime($this->ReadPropertyString('CustomEnd')) ?: time();
-    }
-
-    private function ParseHumanDate(string $value): int
-    {
-        $value = trim($value);
-        if ($value === '') {
-            return 0;
-        }
-
-        $formats = ['d.m.Y H:i', 'd.m.Y H:i:s', 'Y-m-d H:i', 'Y-m-d H:i:s', 'd.m.Y'];
-        foreach ($formats as $format) {
-            $date = DateTime::createFromFormat($format, $value);
-            if ($date instanceof DateTime) {
-                return $date->getTimestamp();
-            }
-        }
-
-        return strtotime($value) ?: 0;
-    }
-
-    private function ReadAggregatedValues(int $variableID, int $aggregation, int $start, int $end): array
-    {
-        $archiveID = $this->GetArchiveID();
-        $aggregationType = AC_GetAggregationType($archiveID, $variableID);
-        $rows = AC_GetAggregatedValues($archiveID, $variableID, $aggregation, $start, $end, 0);
-        $rows = array_reverse($rows);
-        $format = $this->GetDateFormatForAggregation($aggregation);
-        $values = [];
-
-        foreach ($rows as $row) {
-            $values[] = [
-                'timestamp' => (int) $row['TimeStamp'],
-                'label' => $this->GetDeltaLabel((int) $row['TimeStamp'], $aggregation, $format),
-                'value' => round($this->GetDeltaValue($row, $aggregationType), 3),
-            ];
-        }
-
-        return $values;
-    }
-
-    private function GetDeltaValue(array $row, int $aggregationType): float
-    {
-        if ($aggregationType === 1) {
-            return max(0.0, (float) $row['Avg']);
-        }
-
-        if (isset($row['Max'], $row['Min'])) {
-            return max(0.0, (float) $row['Max'] - (float) $row['Min']);
-        }
-
-        return max(0.0, (float) ($row['Avg'] ?? 0));
-    }
-
-    private function GetCurrentDelta(array $values): float
-    {
-        if (count($values) === 0) {
-            return 0.0;
-        }
-
-        return (float) $values[count($values) - 1]['value'];
-    }
-
-    private function GetPreviousDelta(array $values): float
-    {
-        if (count($values) < 2) {
-            return 0.0;
-        }
-
-        return (float) $values[count($values) - 2]['value'];
-    }
-
-    private function GetPeakDelta(array $values): float
-    {
-        if (count($values) === 0) {
-            return 0.0;
-        }
-
-        return (float) max(array_column($values, 'value'));
-    }
-
-    private function BuildForecast(array $series): array
-    {
-        $days = max(1, $this->ReadPropertyInteger('ForecastDays'));
-        $historyDays = max(7, $this->ReadPropertyInteger('HistoryDays'));
-        $start = strtotime('-' . $historyDays . ' days 00:00');
-        $end = strtotime('today 00:00') - 1;
-        $items = [];
-
-        foreach ($series as $item) {
-            $history = $this->ReadAggregatedValues((int) $item['variableID'], 1, $start, $end);
-            $values = array_values(array_filter(array_column($history, 'value'), static fn ($value) => $value > 0));
-            $average = count($values) > 0 ? array_sum($values) / count($values) : 0.0;
-
-            $items[] = [
-                'name' => $item['name'],
-                'variableID' => $item['variableID'],
-                'unit' => $item['unit'],
-                'historyDays' => $historyDays,
-                'forecastDays' => $days,
-                'dailyAverage' => round($average, 3),
-                'forecastTotal' => round($average * $days, 3),
-            ];
-        }
-
-        return [
-            'method' => 'Gleitender Tagesdurchschnitt',
-            'items' => $items,
-        ];
-    }
-
-    private function RenderDashboard(array $data): string
-    {
-        $main = array_values(array_filter($data['series'], static fn ($item) => $item['role'] === 'main'));
-        $consumers = array_values(array_filter($data['series'], static fn ($item) => $item['role'] === 'consumer'));
-
-        $html = '<style>' . $this->GetStyles() . '</style>';
-        $html .= '<div class="ecv">';
-        $html .= '<div class="ecv-head"><div><strong>Stromverbrauch</strong><span>Deltas pro ' . $this->Escape($data['periodLabel']) . ' &middot; ' . date('d.m.Y H:i', $data['start']) . ' - ' . date('d.m.Y H:i', $data['end']) . '</span></div><span>Aktualisiert ' . date('H:i', $data['generatedAt']) . '</span></div>';
-        $html .= $this->RenderChart($main, 'Hauptzaehler');
-        $html .= $this->RenderSummaryTable('Hauptzaehler', $main);
-        $html .= $this->RenderChart($consumers, 'Weitere Verbraucher');
-        $html .= $this->RenderSummaryTable('Weitere Verbraucher', $consumers);
-        $html .= '</div>';
-
-        return $html;
-    }
-
-    private function RenderForecast(array $forecast): string
-    {
-        $html = '<style>' . $this->GetStyles() . '</style>';
-        $html .= '<div class="ecv">';
-        $html .= '<div class="ecv-head"><div><strong>Prognose</strong><span>' . $this->Escape($forecast['method']) . '</span></div></div>';
-        $html .= '<table><thead><tr><th>Name</th><th>Tagesmittel</th><th>Prognose</th><th>Basis</th></tr></thead><tbody>';
-
-        foreach ($forecast['items'] as $item) {
-            $unit = $this->Escape($item['unit']);
-            $html .= '<tr>';
-            $html .= '<td>' . $this->Escape($item['name']) . '</td>';
-            $html .= '<td>' . $this->FormatNumber($item['dailyAverage']) . ' ' . $unit . '</td>';
-            $html .= '<td>' . $this->FormatNumber($item['forecastTotal']) . ' ' . $unit . '</td>';
-            $html .= '<td>' . (int) $item['historyDays'] . ' Tage &rarr; ' . (int) $item['forecastDays'] . ' Tage</td>';
-            $html .= '</tr>';
-        }
-
-        $html .= '</tbody></table></div>';
-        return $html;
-    }
-
-    private function RenderChart(array $series, string $title): string
-    {
-        if (count($series) === 0) {
-            return '';
-        }
-
-        $width = 980;
-        $height = 350;
-        $paddingLeft = 54;
-        $paddingBottom = 48;
-        $plotWidth = $width - $paddingLeft - 18;
-        $plotHeight = $height - 48 - $paddingBottom;
-        $max = 0.0;
-        $labels = [];
-        $barSeries = [];
-        $colors = ['#2563eb', '#16a34a', '#dc2626', '#9333ea', '#ea580c', '#0891b2', '#4f46e5', '#65a30d'];
-
-        foreach ($series as $index => $item) {
-            $color = $colors[$index % count($colors)];
-            $barSeries[] = [
-                'name' => $item['name'],
-                'values' => $item['values'],
-                'color' => $color,
-            ];
-
-            if (count($item['previousYearValues'] ?? []) > 0) {
-                $barSeries[] = [
-                    'name' => $item['name'] . ' Vorjahr',
-                    'values' => $item['previousYearValues'],
-                    'color' => $this->GetPreviousYearColor($color),
-                ];
-            }
-
-            foreach ($item['values'] as $point) {
-                $max = max($max, (float) $point['value']);
-                $labels[(int) $point['timestamp']] = $point['label'];
-            }
-
-            foreach (($item['previousYearValues'] ?? []) as $point) {
-                $max = max($max, (float) $point['value']);
-            }
-        }
-
-        ksort($labels);
-        $timestamps = array_keys($labels);
-        if (count($timestamps) === 0) {
-            return '<h3>' . $this->Escape($title) . '</h3><div class="empty">Keine Delta-Daten im Zeitraum vorhanden.</div>';
-        }
-
-        $max = $max > 0 ? $max : 1;
-        $groupWidth = $plotWidth / max(1, count($timestamps));
-        $barGap = 3;
-        $barWidth = max(2, min(24, (($groupWidth - 8) / max(1, count($barSeries))) - $barGap));
-        $html = '<h3>' . $this->Escape($title) . '</h3>';
-        $svg = '<svg class="chart" viewBox="0 0 ' . $width . ' ' . $height . '" role="img">';
-        $svg .= '<line x1="' . $paddingLeft . '" y1="44" x2="' . $paddingLeft . '" y2="' . ($height - $paddingBottom) . '"></line>';
-        $svg .= '<line x1="' . $paddingLeft . '" y1="' . ($height - $paddingBottom) . '" x2="' . ($width - 18) . '" y2="' . ($height - $paddingBottom) . '"></line>';
-
-        foreach ($barSeries as $index => $item) {
-            $pointsByTime = [];
-            foreach ($item['values'] as $point) {
-                $pointsByTime[(int) $point['timestamp']] = (float) $point['value'];
-            }
-
-            foreach ($timestamps as $pointIndex => $timestamp) {
-                $value = $pointsByTime[$timestamp] ?? 0.0;
-                $barHeight = ($value / $max) * $plotHeight;
-                $x = $paddingLeft + ($pointIndex * $groupWidth) + 4 + ($index * ($barWidth + $barGap));
-                $y = 44 + ($plotHeight - $barHeight);
-                $color = $item['color'];
-                $svg .= '<rect x="' . round($x, 2) . '" y="' . round($y, 2) . '" width="' . round($barWidth, 2) . '" height="' . round($barHeight, 2) . '" style="fill:' . $color . '"><title>' . $this->Escape($item['name']) . ': ' . $this->FormatNumber($value) . '</title></rect>';
-
-                if ($value > 0) {
-                    $label = $this->FormatNumber($value);
-                    $labelX = $x + ($barWidth / 2);
-                    $labelY = max(10, $y - 4);
-                    if ($barWidth < 9) {
-                        $svg .= '<text class="bar-value" x="' . round($labelX, 2) . '" y="' . round($labelY, 2) . '" text-anchor="end" transform="rotate(-60 ' . round($labelX, 2) . ' ' . round($labelY, 2) . ')">' . $this->Escape($label) . '</text>';
-                    } else {
-                        $svg .= '<text class="bar-value" x="' . round($labelX, 2) . '" y="' . round($labelY, 2) . '" text-anchor="middle">' . $this->Escape($label) . '</text>';
-                    }
+            if ($fresh) {
+                $first = $this->FirstDay($meter);
+                if ($first === null) {
+                    continue;
                 }
-            }
-        }
-
-        $labelStep = max(1, (int) ceil(count($timestamps) / 8));
-        foreach ($timestamps as $index => $timestamp) {
-            if ($index % $labelStep !== 0 && $index !== count($timestamps) - 1) {
-                continue;
+                $entry = ['sig' => $signature, 'start' => $first, 'wh' => []];
             }
 
-            $x = $paddingLeft + ($index * $groupWidth) + ($groupWidth / 2);
-            $svg .= '<text class="axis-label" x="' . round($x, 2) . '" y="' . ($height - 18) . '" text-anchor="middle">' . $this->Escape((string) $labels[$timestamp]) . '</text>';
-        }
+            // komplett lesen oder nur ab „heute − REREAD_DAYS“ neu lesen und anhängen
+            $from = $fresh ? strtotime($entry['start'])
+                : max(strtotime($entry['start']), strtotime('-' . self::REREAD_DAYS . ' days', strtotime('today')));
+            $keep = $this->DayIndex($entry['start'], date('Y-m-d', $from));
+            $entry['wh'] = array_merge(
+                array_slice($entry['wh'], 0, $keep),
+                array_pad([], max(0, $keep - count($entry['wh'])), null),
+                $this->ToWh($this->ReadConsumption($meter, self::AGG_DAY, $from, time()))
+            );
 
-        $svg .= '<text x="' . $paddingLeft . '" y="16">Max ' . $this->FormatNumber($max) . '</text>';
-        $svg .= '</svg>';
-
-        $legend = '<div class="legend">';
-        foreach ($barSeries as $item) {
-            $legend .= '<span><i style="background:' . $item['color'] . '"></i>' . $this->Escape($item['name']) . '</span>';
-        }
-        $legend .= '</div>';
-
-        return $html . $svg . $legend;
-    }
-
-    private function RenderSummaryTable(string $title, array $items): string
-    {
-        if (count($items) === 0) {
-            return '';
-        }
-
-        $html = '<table><thead><tr><th>Name</th><th>Variable</th><th>Aktuell</th><th>Vorher</th><th>Max Delta</th><th>Datenpunkte</th></tr></thead><tbody>';
-
-        foreach ($items as $item) {
-            $html .= '<tr>';
-            $html .= '<td>' . $this->Escape($item['name']) . '</td>';
-            $html .= '<td>' . (int) $item['variableID'] . '</td>';
-            $html .= '<td>' . $this->FormatNumber($item['currentDelta']) . ' ' . $this->Escape($item['unit']) . '</td>';
-            $html .= '<td>' . $this->FormatNumber($item['previousDelta']) . ' ' . $this->Escape($item['unit']) . '</td>';
-            $html .= '<td>' . $this->FormatNumber($item['peakDelta']) . ' ' . $this->Escape($item['unit']) . '</td>';
-            $html .= '<td>' . count($item['values']) . '</td>';
-            $html .= '</tr>';
-        }
-
-        $html .= '</tbody></table>';
-        return $html;
-    }
-
-    private function GetConfiguredSeries(): array
-    {
-        $series = [
-            ['name' => 'L1', 'id' => $this->ReadPropertyInteger('L1VariableID'), 'role' => 'main', 'showIdent' => 'ShowL1'],
-            ['name' => 'L2', 'id' => $this->ReadPropertyInteger('L2VariableID'), 'role' => 'main', 'showIdent' => 'ShowL2'],
-            ['name' => 'L3', 'id' => $this->ReadPropertyInteger('L3VariableID'), 'role' => 'main', 'showIdent' => 'ShowL3'],
-            ['name' => 'Gesamt', 'id' => $this->ReadPropertyInteger('TotalVariableID'), 'role' => 'main', 'showIdent' => 'ShowTotal'],
-        ];
-
-        $consumers = json_decode($this->ReadPropertyString('Consumers'), true);
-        if (!is_array($consumers)) {
-            $consumers = [];
-        }
-
-        foreach (array_slice($consumers, 0, 10) as $index => $consumer) {
-            if (isset($consumer['Active']) && !$consumer['Active']) {
-                continue;
+            // führende Tage ohne Daten abschneiden
+            while ($entry['wh'] && $entry['wh'][0] === null) {
+                array_shift($entry['wh']);
+                $entry['start'] = date('Y-m-d', strtotime('+1 day', strtotime($entry['start'])));
             }
 
-            $name = trim((string) ($consumer['Name'] ?? ''));
-            $series[] = [
-                'name' => $name !== '' ? $name : 'Verbraucher ' . ($index + 1),
-                'id' => (int) ($consumer['VariableID'] ?? 0),
-                'role' => 'consumer',
-                'showIdent' => 'ShowConsumer' . ($index + 1),
-            ];
+            $cache[$meter['k']] = $entry;
+            $result[$meter['k']] = ['start' => $entry['start'], 'wh' => $entry['wh']];
         }
 
-        return $series;
+        $this->WriteAttributeString('DayCache', json_encode(array_intersect_key($cache, array_flip(array_column($meters, 'k')))));
+        return $result;
     }
 
-    private function IsArchived(int $archiveID, int $variableID): bool
+    /** Erster Tag mit Archivdaten (über die Jahresaggregation, ohne alle Werte zu lesen) */
+    private function FirstDay(array $meter): ?string
     {
-        foreach (AC_GetAggregationVariables($archiveID, false) as $variable) {
-            if ((int) $variable['VariableID'] === $variableID && (!isset($variable['AggregationActive']) || $variable['AggregationActive'])) {
-                return true;
-            }
+        $years = @AC_GetAggregatedValues($this->ArchiveID(), $meter['id'], self::AGG_YEAR, 0, time(), 0) ?: [];
+        if (!$years) {
+            return null;
         }
-
-        return false;
+        return date('Y-01-01', min(array_map(static fn ($r) => (int) $r['TimeStamp'], $years)));
     }
 
-    private function GetArchiveID(): int
+    private function DayIndex(string $from, string $to): int
     {
-        return $this->ReadPropertyInteger('ArchiveID');
+        return (int) round((strtotime("$to 12:00") - strtotime("$from 12:00")) / 86400);
     }
 
-    private function GetDateFormatForAggregation(int $aggregation): string
+    /** kWh|null je Zeitraum → Wh als ganze Zahl (kleineres JSON) */
+    private function ToWh(array $values): array
+    {
+        return array_values(array_map(static fn ($v) => $v === null ? null : (int) round($v * 1000), $values));
+    }
+
+    // ===================================================================
+    // Archiv lesen
+    // ===================================================================
+
+    private function BucketStart(int $ts, int $aggregation): int
     {
         return match ($aggregation) {
-            0, 5, 6, 8 => 'd.m. H:i',
-            1 => 'd.m.',
-            2 => '\K\W W',
-            3 => 'M',
-            4 => 'Y',
-            default => 'd.m.',
+            self::AGG_HOUR => strtotime(date('Y-m-d H:00:00', $ts)),
+            self::AGG_YEAR => strtotime(date('Y-01-01', $ts)),
+            default        => strtotime(date('Y-m-d', $ts)),
         };
     }
 
-    private function GetDeltaLabel(int $timestamp, int $aggregation, string $format): string
+    /** @return int[] Beginn aller Stunden/Tage von $start bis $end */
+    private function Timeline(int $start, int $end, int $aggregation): array
     {
-        if ($aggregation === 1) {
-            if (date('Y-m-d', $timestamp) === date('Y-m-d')) {
-                return 'Heute';
+        $step = $aggregation === self::AGG_HOUR ? '+1 hour' : '+1 day';
+        $buckets = [];
+        for ($b = $this->BucketStart($start, $aggregation); $b <= $end && count($buckets) < 50000; $b = strtotime($step, $b)) {
+            $buckets[] = $b;
+        }
+        return $buckets;
+    }
+
+    /**
+     * Verbrauch je Stunde/Tag in kWh.
+     * @return array<int, float|null> Beginn => Verbrauch (null = keine Daten)
+     */
+    private function ReadConsumption(array $meter, int $aggregation, int $start, int $end): array
+    {
+        $key = implode(':', [$meter['id'], $aggregation, $start, $end]);
+        if (isset($this->cache[$key])) {
+            return $this->cache[$key];
+        }
+
+        $archive = $this->ArchiveID();
+        $timeline = $this->Timeline($start, $end, $aggregation);
+        if (!$timeline) {
+            return $this->cache[$key] = [];
+        }
+
+        $rows = [];
+        foreach (@AC_GetAggregatedValues($archive, $meter['id'], $aggregation, $timeline[0], $end, 0) ?: [] as $row) {
+            $rows[$this->BucketStart((int) $row['TimeStamp'], $aggregation)] = $row;
+        }
+
+        $result = [];
+        if (AC_GetAggregationType($archive, $meter['id']) === 1) {
+            // Zähler-Archiv: Avg enthält die Summe der positiven Änderungen im Zeitraum
+            foreach ($timeline as $bucket) {
+                $result[$bucket] = isset($rows[$bucket]) ? max(0.0, (float) $rows[$bucket]['Avg']) * $meter['factor'] : null;
             }
-
-            if (date('Y-m-d', $timestamp) === date('Y-m-d', strtotime('yesterday'))) {
-                return 'Gestern';
+        } else {
+            // Standard-Archiv: höchster Stand im Zeitraum − Stand davor
+            $before = @AC_GetLoggedValues($archive, $meter['id'], 0, $timeline[0] - 1, 1) ?: [];
+            $last = $before ? (float) $before[0]['Value'] : null;
+            $step = $aggregation === self::AGG_HOUR ? '+1 hour' : '+1 day';
+            foreach ($timeline as $bucket) {
+                if (!isset($rows[$bucket])) {
+                    $result[$bucket] = null;
+                    continue;
+                }
+                $min = (float) $rows[$bucket]['Min'];
+                $max = (float) $rows[$bucket]['Max'];
+                if ($last === null) {                       // kein früherer Stand bekannt
+                    $result[$bucket] = ($max - $min) * $meter['factor'];
+                    $last = $max;
+                } elseif ($min >= $last) {                  // normaler Fall: Stand ist nur gestiegen
+                    $result[$bucket] = ($max - $last) * $meter['factor'];
+                    $last = $max;
+                } else {                                    // Reset/Überlauf im Zeitraum: Einzelwerte auswerten
+                    $result[$bucket] = $this->RawConsumption($archive, $meter, $bucket, strtotime($step, $bucket) - 1, $last) * $meter['factor'];
+                }
             }
         }
-
-        return date($format, $timestamp);
+        return $this->cache[$key] = $result;
     }
 
-    private function GetVariableUnit(int $variableID): string
+    /** Summe der Zählerzuwächse aus den Einzelwerten (nur bei Reset/Überlauf nötig); führt $last fort */
+    private function RawConsumption(int $archive, array $meter, int $from, int $to, float &$last): float
     {
-        $variable = IPS_GetVariable($variableID);
-        $profileName = $variable['VariableCustomProfile'] !== '' ? $variable['VariableCustomProfile'] : $variable['VariableProfile'];
-
-        if ($profileName === '' || !IPS_VariableProfileExists($profileName)) {
-            return 'kWh';
+        $sum = 0.0;
+        foreach (array_reverse(@AC_GetLoggedValues($archive, $meter['id'], $from, $to, 0) ?: []) as $row) {
+            $value = (float) $row['Value'];
+            $delta = $value - $last;
+            if ($delta < 0) {
+                $delta = $meter['overflow'] > $last ? $meter['overflow'] - $last + $value : $value;   // Überlauf, sonst Reset auf 0
+            }
+            $sum += $delta;
+            $last = $value;
         }
-
-        $profile = IPS_GetVariableProfile($profileName);
-        return $profile['Suffix'] !== '' ? trim($profile['Suffix']) : 'kWh';
+        return $sum;
     }
 
-    private function GetPreviousYearColor(string $color): string
+    // ===================================================================
+    // Hilfen
+    // ===================================================================
+
+    private function MaintainReferences(): void
     {
-        $rgb = sscanf($color, '#%02x%02x%02x');
-        if (!is_array($rgb) || count($rgb) !== 3) {
-            return '#94a3b8';
+        foreach ($this->GetReferenceList() as $reference) {
+            $this->UnregisterReference($reference);
         }
-
-        return sprintf(
-            '#%02x%02x%02x',
-            min(255, (int) round($rgb[0] + ((255 - $rgb[0]) * 0.45))),
-            min(255, (int) round($rgb[1] + ((255 - $rgb[1]) * 0.45))),
-            min(255, (int) round($rgb[2] + ((255 - $rgb[2]) * 0.45)))
-        );
-    }
-
-    private function GetStyles(): string
-    {
-        return '.ecv{font-family:Arial,sans-serif;color:#1f2937;background:#fff}.ecv-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;margin:0 0 12px}.ecv-head strong{display:block;font-size:18px}.ecv-head span{display:block;color:#6b7280;font-size:12px;margin-top:3px}.chart{width:100%;height:auto;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb}.chart line{stroke:#9ca3af;stroke-width:1}.chart rect{rx:2;ry:2}.chart text{font-size:12px;fill:#4b5563}.chart .axis-label{font-size:10px}.chart .bar-value{font-size:9px;fill:#111827}.legend{display:flex;flex-wrap:wrap;gap:10px;margin:10px 0 16px}.legend span{display:inline-flex;align-items:center;gap:6px;font-size:12px}.legend i{width:10px;height:10px;border-radius:50%;display:inline-block}h3{font-size:14px;margin:14px 0 6px}table{border-collapse:collapse;width:100%;font-size:13px;margin-bottom:14px}th,td{text-align:left;border-bottom:1px solid #e5e7eb;padding:7px 8px}th{color:#374151;background:#f3f4f6}.empty{padding:18px;border:1px solid #e5e7eb;border-radius:6px;background:#f9fafb;color:#6b7280}';
-    }
-
-    private function FormatNumber(float $value): string
-    {
-        return number_format($value, 2, ',', '.');
-    }
-
-    private function Escape(string $value): string
-    {
-        return htmlspecialchars($value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+        foreach ($this->Meters() as $meter) {
+            $this->RegisterReference($meter['id']);
+        }
+        if (($archive = $this->ArchiveID()) > 0) {
+            $this->RegisterReference($archive);
+        }
     }
 }
