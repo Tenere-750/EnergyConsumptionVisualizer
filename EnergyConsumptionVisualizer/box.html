@@ -308,7 +308,7 @@ function tiles(bs, prevBs, r) {
       + tile(name + ' · Kosten', fmt(e, 'eur'), 'inkl. Grundpreis ' + fmt(fix, 'eur'))
       + tile(name + ' · Hochrechnung', proj ? fmt(e / f, 'eur') : '–', proj ? fmt(k / f, 'kwh') + ' bis Ende ' + bis : 'nur für den laufenden Zeitraum');
   };
-  groups().forEach(function (g) {
+  groups().filter(function (g) { return g.tariff === S.tariff; }).forEach(function (g) {   // nur der gewählte Tarif
     var k = g.parts.reduce(function (a, p) { return a + sumOf(bs, p, 'kwh'); }, 0);
     var fx = FIX.filter(function (x) { return x.fix === g.tariff; }).reduce(function (a, x) { return a + sumOf(bs, x, 'eur'); }, 0);
     var e = g.parts.reduce(function (a, p) { return a + sumOf(bs, p, 'eur'); }, 0) + fx;
