@@ -22,8 +22,8 @@ Jede Zeile der Liste **Zaehler** ist ein Zaehler:
 | Name, Variable | Anzeigename, Quellvariable (im Archiv geloggt) |
 | Gruppe | **Gesamtzaehler** (daraus „Rest“) · **Phase** · **Verbraucher** · **Eigener Zaehler** (eigener Kreis, z. B. Waermepumpe) |
 | Tarif | Haushalt · Waermepumpe · ohne Kosten |
-| Quelle | **Zaehlerstand** (z. B. KNX DPT 13.010 Wh / 13.013 kWh) oder **Impulse** (z. B. KNX DPT 12.001) |
-| Einheit / Impulse pro kWh | kWh oder Wh beim Zaehlerstand; Impulse je kWh bei Impulsen |
+| Quelle | **Zaehlerstand** (z. B. KNX DPT 13.010 Wh / 13.013 kWh), **Impulse** (z. B. KNX DPT 12.001) oder **Leistung** (W/kW, z. B. KNX DPT 14.056; Verbrauch = zeitgewichteter Mittelwert × Dauer, Archiv *Standard*) |
+| Einheit / Impulse pro kWh | kWh/Wh beim Zaehlerstand, W/kW bei Leistung; Impulse je kWh bei Impulsen |
 | Ueberlauf bei | Wert, bei dem der Zaehler wieder bei 0 beginnt (z. B. 65536); 0 = nur Reset |
 | beruecksichtigen | aus = Zaehler bleibt in der Liste, wird aber nicht ausgewertet (z. B. in Planung) |
 | Bemerkung | frei |
@@ -44,6 +44,8 @@ Grundpreise werden zeitanteilig verteilt (Monatsbetrag / Tage des Monats je Tag)
 - Ein fehlender Zaehler legt die Anzeige nicht lahm (Status 202, Details im Debug).
 
 ## Aenderungen
+
+- **2.1** – Neue Quelle **Leistung** (W oder kW): der Verbrauch wird aus dem zeitgewichteten Mittelwert des Archivs mal Dauer berechnet. Die Variable muss als *Standard* archiviert sein.
 
 - **2.0.5** – Tageswerte werden automatisch neu eingelesen, wenn die Archivart einer Variable geaendert wird (Standard ↔ Zaehler).
 

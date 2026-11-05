@@ -8,6 +8,7 @@ declare(strict_types=1);
  * Zähler (Liste „Meters“), je Zeile:
  *   Gruppe  total = Gesamtzähler (Rest = Gesamt − Verbraucher) · phase · consumer · separate = eigener Zähler (z. B. Wärmepumpe)
  *   Quelle  counter = Zählerstand in kWh/Wh (z. B. KNX DPT 13) · impulse = Impulszähler (z. B. KNX DPT 12) mit „Impulse pro kWh“
+ *           power = Leistung in W/kW (Standard-Archiv): Verbrauch = zeitgewichteter Mittelwert × Dauer
  *   Tarif   household | heatpump | '' (ohne Kosten)
  * Die Variable muss im Archiv geloggt sein – als „Zähler“ oder „Standard“. Bei „Standard“ wird der
  * Verbrauch aus der Differenz der Zählerstände berechnet (Überlauf/Reset werden erkannt).
@@ -167,7 +168,7 @@ class EnergyConsumptionVisualizer extends IPSModule
     // Konfiguration
     // ===================================================================
 
-    /** @return array<int, array{k:string, name:string, id:int, group:string, tariff:string, factor:float, overflow:float}> */
+    /** @return array<int, array{k:string, name:string, id:int, group:string, tariff:string, source:string, factor:float, overflow:float}> */
     private function Meters(): array
     {
         $rows = json_decode($this->ReadPropertyString('Meters'), true);
@@ -185,9 +186,13 @@ class EnergyConsumptionVisualizer extends IPSModule
                 'id'       => $id,
                 'group'    => in_array($row['Group'] ?? '', self::GROUPS, true) ? $row['Group'] : 'consumer',
                 'tariff'   => isset(self::TARIFFS[$tariff]) ? $tariff : '',
-                'factor'   => ($row['Source'] ?? 'counter') === 'impulse'
-                    ? 1 / max(1, (float) ($row['Impulses'] ?? 1000))
-                    : (($row['Unit'] ?? 'kWh') === 'Wh' ? 0.001 : 1.0),
+                'source'   => $source = in_array($row['Source'] ?? '', ['impulse', 'power'], true) ? $row['Source'] : 'counter',
+                // Rohwert → kWh (bei Leistung: W bzw. kW → kW)
+                'factor'   => match ($source) {
+                    'impulse' => 1 / max(1, (float) ($row['Impulses'] ?? 1000)),
+                    'power'   => ($row['Unit'] ?? 'W') === 'kW' ? 1.0 : 0.001,
+                    default   => ($row['Unit'] ?? 'kWh') === 'Wh' ? 0.001 : 1.0,
+                },
                 'overflow' => max(0.0, (float) ($row['Overflow'] ?? 0)),
             ];
         }
@@ -213,10 +218,12 @@ class EnergyConsumptionVisualizer extends IPSModule
         }
         $valid = $invalid = [];
         foreach ($this->Meters() as $meter) {
-            if (IPS_VariableExists($meter['id']) && AC_GetLoggingStatus($archive, $meter['id'])) {
-                $valid[] = $meter;
+            if (!IPS_VariableExists($meter['id']) || !AC_GetLoggingStatus($archive, $meter['id'])) {
+                $invalid[] = "{$meter['name']} (#{$meter['id']}): nicht archiviert";
+            } elseif ($meter['source'] === 'power' && AC_GetAggregationType($archive, $meter['id']) !== 0) {
+                $invalid[] = "{$meter['name']} (#{$meter['id']}): Leistung muss als „Standard“ archiviert sein";
             } else {
-                $invalid[] = "{$meter['name']} (#{$meter['id']})";
+                $valid[] = $meter;
             }
         }
         if ($invalid) {
@@ -371,7 +378,7 @@ class EnergyConsumptionVisualizer extends IPSModule
 
         foreach ($meters as $meter) {
             // Archivart gehört dazu: nach Umstellung Standard ↔ Zähler wird neu eingelesen
-            $signature = md5(json_encode([$archive, $meter['id'], $meter['factor'], $meter['overflow'], AC_GetAggregationType($archive, $meter['id'])]));
+            $signature = md5(json_encode([$archive, $meter['id'], $meter['source'], $meter['factor'], $meter['overflow'], AC_GetAggregationType($archive, $meter['id'])]));
             $entry = $cache[$meter['k']] ?? null;
             $fresh = $entry === null || $entry['sig'] !== $signature;
 
@@ -475,7 +482,18 @@ class EnergyConsumptionVisualizer extends IPSModule
         }
 
         $result = [];
-        if (AC_GetAggregationType($archive, $meter['id']) === 1) {
+        if ($meter['source'] === 'power') {
+            // Leistung: Symcon mittelt Standard-Werte zeitgewichtet; Energie = Mittelwert × Dauer
+            $step = $aggregation === self::AGG_HOUR ? '+1 hour' : '+1 day';
+            foreach ($timeline as $bucket) {
+                if (!isset($rows[$bucket])) {
+                    $result[$bucket] = null;
+                    continue;
+                }
+                $duration = (float) ($rows[$bucket]['Duration'] ?? (min(strtotime($step, $bucket), time()) - $bucket));
+                $result[$bucket] = max(0.0, (float) $rows[$bucket]['Avg']) * $meter['factor'] * $duration / 3600;
+            }
+        } elseif (AC_GetAggregationType($archive, $meter['id']) === 1) {
             // Zähler-Archiv: Avg enthält die Summe der positiven Änderungen im Zeitraum
             foreach ($timeline as $bucket) {
                 $result[$bucket] = isset($rows[$bucket]) ? max(0.0, (float) $rows[$bucket]['Avg']) * $meter['factor'] : null;
