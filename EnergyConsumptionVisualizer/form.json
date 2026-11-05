@@ -92,6 +92,10 @@
                             {
                                 "caption": "Impulse",
                                 "value": "impulse"
+                            },
+                            {
+                                "caption": "Leistung",
+                                "value": "power"
                             }
                         ]
                     }
@@ -99,7 +103,7 @@
                 {
                     "caption": "Einheit",
                     "name": "Unit",
-                    "width": "90px",
+                    "width": "100px",
                     "add": "kWh",
                     "edit": {
                         "type": "Select",
@@ -111,6 +115,14 @@
                             {
                                 "caption": "Wh",
                                 "value": "Wh"
+                            },
+                            {
+                                "caption": "W",
+                                "value": "W"
+                            },
+                            {
+                                "caption": "kW",
+                                "value": "kW"
                             }
                         ]
                     }
@@ -157,7 +169,7 @@
         },
         {
             "type": "Label",
-            "caption": "Jede Zeile ist ein Zähler. Nicht berücksichtigte Zähler (z. B. in Planung, noch ohne Variable) bleiben in der Liste, werden aber nicht ausgewertet. Gesamtzähler: „Rest“ = Gesamt minus Verbraucher mit gleichem Tarif. Eigener Zähler: eigener Kreis, z. B. Wärmepumpe. Einheit gilt für Zählerstände, Impulse/kWh für Impulse. Überlauf bei: Wert, bei dem der Zähler wieder bei 0 beginnt (z. B. 65536), 0 = nur Reset. Die Variablen müssen im Archiv geloggt sein (Zähler oder Standard)."
+            "caption": "Jede Zeile ist ein Zähler. Nicht berücksichtigte Zähler (z. B. in Planung, noch ohne Variable) bleiben in der Liste, werden aber nicht ausgewertet. Gesamtzähler: „Rest“ = Gesamt minus Verbraucher mit gleichem Tarif. Eigener Zähler: eigener Kreis, z. B. Wärmepumpe. Einheit: kWh/Wh bei Zählerstand, W/kW bei Leistung; Impulse/kWh bei Impulsen. Leistung: der Verbrauch wird aus dem zeitgewichteten Mittelwert berechnet, die Variable muss als „Standard“ archiviert sein. Überlauf bei: Wert, bei dem der Zähler wieder bei 0 beginnt (z. B. 65536), 0 = nur Reset. Die Variablen müssen im Archiv geloggt sein (Zähler oder Standard)."
         },
         {
             "type": "ExpansionPanel",
