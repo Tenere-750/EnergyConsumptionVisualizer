@@ -9,7 +9,7 @@ Interaktive Verbrauchs- und Kostenuebersicht fuer beliebig viele Stromzaehler �
 - **Verlauf** (gestapelte Balken) oder **Anteile** (Ring)
 - Aufteilung nach **Verbrauchern** (inkl. „Rest“ = Gesamt minus Verbraucher) oder nach **Phasen**
 - **Vorjahr** als Linie und in Prozent – verglichen wird bis zum gleichen Stichtag
-- Kacheln je Tarif (Haushalt, Waermepumpe …) mit Kosten inkl. Grundpreis, Gesamtkosten, Hochrechnung fuer den laufenden Zeitraum
+- Kacheln je Tarif in eigener Reihe – Haushalt, Waermepumpe, Gesamt – jeweils Verbrauch, Kosten inkl. Grundpreis und Hochrechnung fuer den laufenden Zeitraum
 - Tabelle mit kWh, Anteil, Ø Leistung, Kosten, Vorjahr; Legende zum Ein-/Ausblenden
 - Hell/Dunkel automatisch oder fest; die letzte Auswahl merkt sich der Browser
 
@@ -45,6 +45,7 @@ Grundpreise werden zeitanteilig verteilt (Monatsbetrag / Tage des Monats je Tag)
 
 ## Aenderungen
 
-- **2.0.1** – Kacheln: Kosten und Hochrechnung (kWh und Euro) je Tarif, also auch fuer die Waermepumpe; Kachel „Kosten gesamt“ mit Gesamthochrechnung.
+- **2.0.2** – Kacheln je Tarif als eigene Reihe: Verbrauch · Kosten · Hochrechnung fuer Haushalt, darunter Waermepumpe, darunter Gesamt. Die Reihe richtet sich nach dem Tarif des Zaehlers (nicht nach der Gruppe); ein Tarif ohne beruecksichtigten Zaehler zeigt „Kein Zaehler beruecksichtigt“.
+- **2.0.1** – Kosten und Hochrechnung je Tarif (ersetzt durch 2.0.2).
 
 - **2.0** – Interaktive HTMLBox statt sechs statischer Boxen; Zaehlerliste mit Gruppe, Tarif, Quelle (Zaehlerstand/Impulse), Ueberlauf und „beruecksichtigen“; Tarife mit automatischer Historie; Standard-Archive; Tages-Cache; automatische Aktualisierung. Die Konfiguration aus 1.05 (L1–L3, Gesamt, Verbraucher) wird beim ersten Uebernehmen uebernommen. **Entfallen:** die Variablen *Stunde, Tag, Woche, Jahr, Eigener Zeitraum, Prognose*, die Anzeigen-Schalter und die Zeitraum-Felder – Links darauf im WebFront/IPSView bitte auf die HTMLBox *Stromverbrauch* umstellen.

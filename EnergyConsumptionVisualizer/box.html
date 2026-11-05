@@ -24,12 +24,12 @@
 .ecv .seg button[aria-pressed="true"]{background:var(--panel);color:var(--ink);box-shadow:0 1px 2px rgb(0 0 0 / .12)}
 .ecv .check{display:inline-flex;align-items:center;gap:6px;color:var(--muted)}
 .ecv button:focus-visible,.ecv input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
-.ecv .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}
+.ecv .tiles{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+@media (max-width:640px){.ecv .tiles{grid-template-columns:1fr}}
 .ecv .tile{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 12px;display:grid;gap:2px}
 .ecv .tile .k{font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
 .ecv .tile .v{font-size:22px;font-weight:650;font-variant-numeric:tabular-nums}
 .ecv .tile .s{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
-.ecv .tile .s > span:first-child{color:var(--ink);opacity:.75}
 .ecv .up{color:var(--up)}.ecv .down{color:var(--down)}
 .ecv .chart{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px 10px 6px;position:relative;min-width:0}
 .ecv .chart svg{width:100%;height:auto;display:block}
@@ -233,12 +233,14 @@ function val(b, it) {
 function sumOf(bs, it, field) { return bs.reduce(function (a, b) { return a + (b[field][it.k] || 0); }, 0); }
 function hoursOf(bs) { return bs.reduce(function (a, b) { return a + b.hours; }, 0); }
 // Haushalt = Gesamtzähler, sonst Summe der Verbraucher; je eigenem Zähler (z. B. Wärmepumpe) eine Kachel
+// Eine Kachelreihe je Tarif: Gesamtzähler des Tarifs, sonst Summe seiner Verbraucher/eigenen Zähler (ohne Phasen)
 function groups() {
-  var g = [];
-  if (total) g.push({ name: TN[total.tariff] || total.name, parts: [total], tariff: total.tariff });
-  else if (cons.length) g.push({ name: 'Verbraucher', parts: cons, tariff: cons[0].tariff });
-  seps.forEach(function (m) { g.push({ name: m.name, parts: [m], tariff: m.tariff }); });
-  return g;
+  var t = Object.keys(TN).filter(function (k) { return (TAR[k] || []).length || M.some(function (m) { return m.tariff === k; }); });
+  return t.map(function (k) {
+    var tot = M.filter(function (m) { return m.group === 'total' && m.tariff === k; });
+    var parts = tot.length ? tot : M.filter(function (m) { return m.tariff === k && (m.group === 'consumer' || m.group === 'separate'); });
+    return { name: TN[k], parts: parts, tariff: k };
+  });
 }
 
 // ---------- Formatierung ----------
@@ -287,31 +289,30 @@ function render() {
 }
 
 function tiles(bs, prevBs, r) {
-  var h = hoursOf(bs), html = '', all = { k: 0, e: 0 }, fixDone = {};
+  var h = hoursOf(bs), html = '';
   // laufender Zeitraum: Anteil der schon vergangenen Zeit für die Hochrechnung
   var f = 0, bis = { day: 'des Tages', week: 'der Woche', month: 'des Monats', year: 'des Jahres' }[S.period];
   if (bis && r[0] <= NOW && NOW < r[1]) f = (NOW - Math.max(r[0], FIRST)) / (r[1] - Math.max(r[0], FIRST));
   var proj = f > 0.02;
-  var line = function (label, value) { return '<span class="s"><span>' + label + '</span> ' + value + '</span>'; };
-
-  groups().forEach(function (g) {
+  var row = function (name, k, e, fix, pk, none) {
+    if (none) return tile(name + ' · Verbrauch', '–', 'Kein Zähler berücksichtigt') + tile(name + ' · Kosten', '–', '') + tile(name + ' · Hochrechnung', '–', '');
+    return tile(name + ' · Verbrauch', fmt(k, 'kwh'), [prevBs ? pct(k, pk) + ' zum Vorjahr' : '', h ? 'Ø ' + fmt(k * 1000 / h, 'w') : ''].filter(Boolean).join(' · '))
+      + tile(name + ' · Kosten', fmt(e, 'eur'), 'inkl. Grundpreis ' + fmt(fix, 'eur'))
+      + tile(name + ' · Hochrechnung', proj ? fmt(e / f, 'eur') : '–', proj ? fmt(k / f, 'kwh') + ' bis Ende ' + bis : 'nur für den laufenden Zeitraum');
+  };
+  var all = { k: 0, e: 0, fix: 0, pk: 0 }, gs = groups();
+  gs.forEach(function (g) {
     var k = g.parts.reduce(function (a, p) { return a + sumOf(bs, p, 'kwh'); }, 0);
-    var e = g.parts.reduce(function (a, p) { return a + sumOf(bs, p, 'eur'); }, 0);
-    FIX.forEach(function (x) { if (x.fix === g.tariff && !fixDone[x.k]) { e += sumOf(bs, x, 'eur'); fixDone[x.k] = true; } });   // Grundpreis einmal je Tarif
-    all.k += k; all.e += e;
+    var fx = FIX.filter(function (x) { return x.fix === g.tariff; }).reduce(function (a, x) { return a + sumOf(bs, x, 'eur'); }, 0);
+    var e = g.parts.reduce(function (a, p) { return a + sumOf(bs, p, 'eur'); }, 0) + fx;
     var pk = prevBs ? g.parts.reduce(function (a, p) { return a + sumOf(prevBs, p, 'kwh'); }, 0) : 0;
-    html += tile(g.name, fmt(k, 'kwh'),
-      line('Kosten', fmt(e, 'eur') + ' inkl. Grundpreis')
-      + (proj ? line('Hochrechnung', fmt(k / f, 'kwh') + ' · ' + fmt(e / f, 'eur')) : '')
-      + '<span class="s">' + [prevBs ? pct(k, pk) + ' zum Vorjahr' : '', h ? 'Ø ' + fmt(k * 1000 / h, 'w') : ''].filter(Boolean).join(' · ') + '</span>');
+    all.k += k; all.e += e; all.fix += fx; all.pk += pk;
+    html += row(g.name, k, e, fx, pk, !g.parts.length);
   });
-  html += tile('Kosten gesamt', fmt(all.e, 'eur'),
-    line('davon Grundpreise', fmt(FIX.reduce(function (a, x) { return a + sumOf(bs, x, 'eur'); }, 0), 'eur'))
-    + (proj ? line('Hochrechnung', fmt(all.e / f, 'eur') + ' bis Ende ' + bis) : '')
-    + line('Verbrauch', fmt(all.k, 'kwh')));
+  if (gs.length > 1) html += row('Gesamt', all.k, all.e, all.fix, all.pk, false);
   $('tiles').innerHTML = html;
 }
-function tile(k, v, rows) { return '<div class="tile"><span class="k">' + esc(k) + '</span><span class="v">' + v + '</span>' + rows + '</div>'; }
+function tile(k, v, s) { return '<div class="tile"><span class="k">' + esc(k) + '</span><span class="v">' + v + '</span><span class="s">' + s + '</span></div>'; }
 
 function bars(bs, prevBs, its) {
   var W = 1000, Hh = 360, L = 58, R = 12, TOP = 16, B = 34, pw = W - L - R, ph = Hh - TOP - B;
