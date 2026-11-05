@@ -10,6 +10,7 @@
 .ecv[data-theme="dark"]{--bg:#11161d;--panel:#171e27;--ink:#e6ebf2;--muted:#98a3b3;--line:#2a3441;--soft:#1e2731;--accent:#4db3d4;--up:#fb923c;--down:#4ade80;
   --c0:#5b8ff0;--c1:#a78bfa;--c2:#34c38f;--c3:#ec6aa9;--c4:#22b8d6;--c5:#e5b021;--c6:#818cf8;--c7:#8bc34a;--c-rest:#64748b;--c-sep0:#f0913a;--c-sep1:#d97706;--c-g0:#475569;--c-g1:#8a5a2e;color-scheme:dark}
 .ecv *{box-sizing:border-box}
+.ecv [hidden]{display:none!important}
 .ecv header{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:10px}
 .ecv h1{font-size:19px;margin:0;font-weight:650}
 .ecv .nav{display:flex;align-items:center;gap:6px}
@@ -70,6 +71,7 @@
   <div class="seg" data-s="period" role="group" aria-label="Zeitraum"><button data-v="day">Tag</button><button data-v="week">Woche</button><button data-v="month">Monat</button><button data-v="year">Jahr</button><button data-v="years">Jahre</button></div>
   <div class="seg" data-s="unit" role="group" aria-label="Einheit"><button data-v="kwh">kWh</button><button data-v="eur">Euro</button><button data-v="w">Ø Watt</button></div>
   <div class="seg" data-s="view" role="group" aria-label="Darstellung"><button data-v="bars">Verlauf</button><button data-v="pie">Anteile</button></div>
+  <div class="seg" data-s="tariff" role="group" aria-label="Tarif" data-r="tariffseg"></div>
   <div class="seg" data-s="group" role="group" aria-label="Aufteilung" data-r="groupseg"><button data-v="cons">Verbraucher</button><button data-v="phase">Phasen</button></div>
   <label class="check"><input type="checkbox" data-r="prevyear"> Vorjahr</label>
 </div>
@@ -114,7 +116,6 @@ if (total) total.color = '--c-rest';
 var REST = total ? { k: 'rest', name: 'Rest ' + total.name, tariff: total.tariff, color: '--c-rest', derived: true } : null;
 var kinds = Object.keys(TN).filter(function (t) { return M.some(function (m) { return m.tariff === t; }); });
 var FIX = kinds.map(function (t, i) { return { k: 'g_' + t, name: 'Grundpreis ' + TN[t], fix: t, color: '--c-g' + (i % 2) }; });
-if (!phases.length) $('groupseg').hidden = true;
 
 // ---------- Tarife (gelten ab Datum, jüngster zuerst gesucht) ----------
 var TAR = {};
@@ -164,9 +165,9 @@ function fillBucket(b, byHour, cap) {
 }
 
 // ---------- Zeiträume ----------
-var S = { period: 'month', unit: 'kwh', view: 'bars', group: 'cons', prev: false, ref: new Date(NOW), hidden: {} };
-try { var saved = JSON.parse(localStorage.getItem('ecv-' + D.id) || '{}'); ['period','unit','view','group'].forEach(function (k) { if (saved[k]) S[k] = saved[k]; }); S.prev = !!saved.prev; } catch (e) {}
-function remember() { try { localStorage.setItem('ecv-' + D.id, JSON.stringify({ period: S.period, unit: S.unit, view: S.view, group: S.group, prev: S.prev })); } catch (e) {} }
+var S = { period: 'month', unit: 'kwh', view: 'bars', group: 'cons', tariff: '', prev: false, ref: new Date(NOW), hidden: {} };
+try { var saved = JSON.parse(localStorage.getItem('ecv-' + D.id) || '{}'); ['period','unit','view','group','tariff'].forEach(function (k) { if (saved[k]) S[k] = saved[k]; }); S.prev = !!saved.prev; } catch (e) {}
+function remember() { try { localStorage.setItem('ecv-' + D.id, JSON.stringify({ period: S.period, unit: S.unit, view: S.view, group: S.group, tariff: S.tariff, prev: S.prev })); } catch (e) {} }
 
 function buckets(ref, period, cap) {
   var out = [], y = ref.getFullYear(), m = ref.getMonth(), k, a, b;
@@ -218,11 +219,13 @@ function periodLabel(ref, p) {
 }
 
 // ---------- Posten der Ansicht ----------
+// Posten der Ansicht – immer nur ein Tarif (Haushalt und Wärmepumpe werden getrennt betrachtet)
+function of(list) { return list.filter(function (m) { return m.tariff === S.tariff; }); }
 function items() {
-  var list = S.group === 'phase' ? phases.slice() : cons.concat(REST ? [REST] : []);
-  list = list.concat(seps);
-  if (!list.length && total) list = [total];
-  return S.unit === 'eur' ? list.concat(FIX) : list;
+  var list = S.group === 'phase' && of(phases).length ? of(phases)
+    : of(cons).concat(REST && REST.tariff === S.tariff ? [REST] : [], of(seps));
+  if (!list.length) list = of(M.filter(function (m) { return m.group === 'total'; }));
+  return S.unit === 'eur' ? list.concat(FIX.filter(function (x) { return x.fix === S.tariff; })) : list;
 }
 function val(b, it) {
   if (b.empty) return 0;
@@ -259,6 +262,11 @@ function niceMax(v) { if (v <= 0) return 1; var p = Math.pow(10, Math.floor(Math
 
 // ---------- Darstellung ----------
 function render() {
+  var gs = groups();
+  if (!gs.some(function (g) { return g.tariff === S.tariff; })) S.tariff = gs.length ? gs[0].tariff : '';
+  $('tariffseg').innerHTML = gs.map(function (g) { return '<button data-v="' + g.tariff + '">' + esc(g.name) + '</button>'; }).join('');
+  $('tariffseg').hidden = gs.length < 2;
+  $('groupseg').hidden = !of(phases).length;
   root.querySelectorAll('[data-s]').forEach(function (seg) { var k = seg.dataset.s; seg.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', String(b.dataset.v === S[k])); }); });
   $('title').textContent = D.title;
   $('plabel').textContent = periodLabel(S.ref, S.period);
@@ -300,16 +308,13 @@ function tiles(bs, prevBs, r) {
       + tile(name + ' · Kosten', fmt(e, 'eur'), 'inkl. Grundpreis ' + fmt(fix, 'eur'))
       + tile(name + ' · Hochrechnung', proj ? fmt(e / f, 'eur') : '–', proj ? fmt(k / f, 'kwh') + ' bis Ende ' + bis : 'nur für den laufenden Zeitraum');
   };
-  var all = { k: 0, e: 0, fix: 0, pk: 0 }, gs = groups();
-  gs.forEach(function (g) {
+  groups().forEach(function (g) {
     var k = g.parts.reduce(function (a, p) { return a + sumOf(bs, p, 'kwh'); }, 0);
     var fx = FIX.filter(function (x) { return x.fix === g.tariff; }).reduce(function (a, x) { return a + sumOf(bs, x, 'eur'); }, 0);
     var e = g.parts.reduce(function (a, p) { return a + sumOf(bs, p, 'eur'); }, 0) + fx;
     var pk = prevBs ? g.parts.reduce(function (a, p) { return a + sumOf(prevBs, p, 'kwh'); }, 0) : 0;
-    all.k += k; all.e += e; all.fix += fx; all.pk += pk;
     html += row(g.name, k, e, fx, pk, !g.parts.length);
   });
-  if (gs.length > 1) html += row('Gesamt', all.k, all.e, all.fix, all.pk, false);
   $('tiles').innerHTML = html;
 }
 function tile(k, v, s) { return '<div class="tile"><span class="k">' + esc(k) + '</span><span class="v">' + v + '</span><span class="s">' + s + '</span></div>'; }
@@ -389,8 +394,8 @@ function table(bs, prevBs) {
     var k = sumOf(bs, i, 'kwh'), e = sumOf(bs, i, 'eur'); allE += e;
     t += '<tr><td><i class="dot" style="background:' + col(i.color) + '"></i>' + esc(i.name) + '</td><td>' + fmt(k, 'kwh') + '</td><td>' + (allK ? (k / allK * 100).toFixed(1).replace('.', ',') + ' %' : '–') + '</td><td>' + fmt(h ? k * 1000 / h : 0, 'w') + '</td><td>' + fmt(e, 'eur') + '</td>' + (prevBs ? '<td>' + pct(k, sumOf(prevBs, i, 'kwh')) + '</td>' : '') + '</tr>';
   });
-  FIX.forEach(function (f) { var e = sumOf(bs, f, 'eur'); allE += e; t += '<tr class="sub"><td>' + esc(f.name) + '</td><td></td><td></td><td></td><td>' + fmt(e, 'eur') + '</td>' + (prevBs ? '<td></td>' : '') + '</tr>'; });
-  t += '<tr class="sum"><td>Summe</td><td>' + fmt(allK, 'kwh') + '</td><td>100 %</td><td>' + fmt(h ? allK * 1000 / h : 0, 'w') + '</td><td>' + fmt(allE, 'eur') + '</td>' + (prevBs ? '<td></td>' : '') + '</tr></tbody>';
+  FIX.filter(function (f) { return f.fix === S.tariff; }).forEach(function (f) { var e = sumOf(bs, f, 'eur'); allE += e; t += '<tr class="sub"><td>' + esc(f.name) + '</td><td></td><td></td><td></td><td>' + fmt(e, 'eur') + '</td>' + (prevBs ? '<td></td>' : '') + '</tr>'; });
+  t += '<tr class="sum"><td>Summe ' + esc(TN[S.tariff] || '') + '</td><td>' + fmt(allK, 'kwh') + '</td><td>100 %</td><td>' + fmt(h ? allK * 1000 / h : 0, 'w') + '</td><td>' + fmt(allE, 'eur') + '</td>' + (prevBs ? '<td></td>' : '') + '</tr></tbody>';
   $('table').innerHTML = t;
 }
 

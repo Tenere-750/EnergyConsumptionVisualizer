@@ -9,7 +9,7 @@ Interaktive Verbrauchs- und Kostenuebersicht fuer beliebig viele Stromzaehler �
 - **Verlauf** (gestapelte Balken) oder **Anteile** (Ring)
 - Aufteilung nach **Verbrauchern** (inkl. „Rest“ = Gesamt minus Verbraucher) oder nach **Phasen**
 - **Vorjahr** als Linie und in Prozent – verglichen wird bis zum gleichen Stichtag
-- Kacheln je Tarif in eigener Reihe – Haushalt, Waermepumpe, Gesamt – jeweils Verbrauch, Kosten inkl. Grundpreis und Hochrechnung fuer den laufenden Zeitraum
+- Haushalt und Waermepumpe getrennt: je eine Kachelreihe Verbrauch · Kosten inkl. Grundpreis · Hochrechnung; Diagramm, Anteile und Tabelle per Umschalter fuer einen Tarif, ohne gemeinsame Summe
 - Tabelle mit kWh, Anteil, Ø Leistung, Kosten, Vorjahr; Legende zum Ein-/Ausblenden
 - Hell/Dunkel automatisch oder fest; die letzte Auswahl merkt sich der Browser
 
@@ -44,6 +44,8 @@ Grundpreise werden zeitanteilig verteilt (Monatsbetrag / Tage des Monats je Tag)
 - Ein fehlender Zaehler legt die Anzeige nicht lahm (Status 202, Details im Debug).
 
 ## Aenderungen
+
+- **2.0.3** – Haushalt und Waermepumpe werden getrennt betrachtet: Umschalter Haushalt/Waermepumpe fuer Diagramm, Anteile und Tabelle (inkl. nur des eigenen Grundpreises), keine gemeinsame Summe mehr; Kacheln nur noch je Tarif, ohne Gesamt-Reihe. Phasen nur im Haushalt.
 
 - **2.0.2** – Kacheln je Tarif als eigene Reihe: Verbrauch · Kosten · Hochrechnung fuer Haushalt, darunter Waermepumpe, darunter Gesamt. Die Reihe richtet sich nach dem Tarif des Zaehlers (nicht nach der Gruppe); ein Tarif ohne beruecksichtigten Zaehler zeigt „Kein Zaehler beruecksichtigt“.
 - **2.0.1** – Kosten und Hochrechnung je Tarif (ersetzt durch 2.0.2).
