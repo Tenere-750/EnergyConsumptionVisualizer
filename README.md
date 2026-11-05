@@ -45,4 +45,6 @@ Grundpreise werden zeitanteilig verteilt (Monatsbetrag / Tage des Monats je Tag)
 
 ## Aenderungen
 
+- **2.0.1** – Kacheln: Kosten und Hochrechnung (kWh und Euro) je Tarif, also auch fuer die Waermepumpe; Kachel „Kosten gesamt“ mit Gesamthochrechnung.
+
 - **2.0** – Interaktive HTMLBox statt sechs statischer Boxen; Zaehlerliste mit Gruppe, Tarif, Quelle (Zaehlerstand/Impulse), Ueberlauf und „beruecksichtigen“; Tarife mit automatischer Historie; Standard-Archive; Tages-Cache; automatische Aktualisierung. Die Konfiguration aus 1.05 (L1–L3, Gesamt, Verbraucher) wird beim ersten Uebernehmen uebernommen. **Entfallen:** die Variablen *Stunde, Tag, Woche, Jahr, Eigener Zeitraum, Prognose*, die Anzeigen-Schalter und die Zeitraum-Felder – Links darauf im WebFront/IPSView bitte auf die HTMLBox *Stromverbrauch* umstellen.
